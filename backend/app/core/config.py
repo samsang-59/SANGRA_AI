@@ -9,7 +9,7 @@ import os
 from pathlib import Path
 from typing import Annotated, Literal
 
-from pydantic import Field, SecretStr, ValidationError, field_validator
+from pydantic import Field, SecretStr, ValidationError, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 # The placeholder written in .env.example. Starting with it is refused (B2-S03).
@@ -47,6 +47,31 @@ class Settings(BaseSettings):
     # Body size limits (Gaps #2): 1 MB on normal routes, 50 MB on the zip upload route.
     max_body_bytes: int = Field(default=1_048_576, gt=0)
     max_upload_bytes: int = Field(default=52_428_800, gt=0)
+
+    # Passwords: bcrypt cost (each +1 doubles the time; 12 is about 0.25 s per hash).
+    bcrypt_rounds: int = Field(default=12, ge=4, le=16)
+
+    # Mailer (Layer 7, item 8): "console" prints the email in the terminal (development), "smtp" sends it.
+    mailer_mode: Literal["console", "smtp"] = "console"
+    mail_from: str = "SANGRA_AI <no-reply@localhost>"
+    smtp_host: str | None = None
+    smtp_port: int = Field(default=587, gt=0, lt=65536)
+    smtp_username: str | None = None
+    smtp_password: SecretStr | None = None
+    smtp_starttls: bool = True
+    smtp_timeout_seconds: float = Field(default=10.0, gt=0)
+
+    # Rate limits (Layer 7, item 5): attempts per window.
+    rate_limit_login: int = Field(default=10, gt=0)
+    rate_limit_login_window_seconds: int = Field(default=15 * 60, gt=0)
+    rate_limit_register: int = Field(default=5, gt=0)
+    rate_limit_register_window_seconds: int = Field(default=60 * 60, gt=0)
+    rate_limit_forgot_password: int = Field(default=3, gt=0)
+    rate_limit_forgot_password_window_seconds: int = Field(default=60 * 60, gt=0)
+    rate_limit_resend_verification: int = Field(default=1, gt=0)
+    rate_limit_resend_verification_window_seconds: int = Field(default=60, gt=0)
+    rate_limit_change_password: int = Field(default=5, gt=0)
+    rate_limit_change_password_window_seconds: int = Field(default=15 * 60, gt=0)
 
     @field_validator("database_url")
     @classmethod
@@ -100,10 +125,18 @@ class Settings(BaseSettings):
             raise ValueError("is not a writable folder") from None
         return value
 
+    @model_validator(mode="after")
+    def _check_smtp(self) -> "Settings":
+        if self.mailer_mode == "smtp" and not self.smtp_host:
+            raise ValueError("SMTP_HOST is required when MAILER_MODE is smtp")
+        return self
+
     def secret_values(self) -> list[str]:
         """Every secret value, so the logger can mask it if it ever shows up in a log line."""
         values = [self.groq_api_key.get_secret_value(), self.jwt_secret.get_secret_value()]
         values.append(self.database_url.get_secret_value())
+        if self.smtp_password is not None:
+            values.append(self.smtp_password.get_secret_value())
         password = _password_from_url(self.database_url.get_secret_value())
         if password:
             values.append(password)

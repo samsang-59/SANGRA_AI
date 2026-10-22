@@ -17,8 +17,11 @@ from app.core.config import Settings, load_settings
 from app.core.db import close_pool, create_pool, open_pool
 from app.core.docker_check import docker_reachable
 from app.core.errors import install_error_handlers
-from app.core.singleflight import SingleFlight
+from app.core.mailer import build_mailer
 from app.core.middleware import BodySizeLimitMiddleware, RequestContextMiddleware, upload_aware_limit
+from app.core.rate_limit import RateLimiter, auth_rules
+from app.core.security import DummyHash
+from app.core.singleflight import SingleFlight
 from app.repositories import health_repository
 from app.routers import health
 
@@ -50,6 +53,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or load_settings()
     app = FastAPI(title="SANGRA_AI", version="0.1.0", lifespan=lifespan)
     app.state.settings = settings
+    app.state.mailer = build_mailer(settings)
+    app.state.rate_limiter = RateLimiter()
+    app.state.rate_rules = auth_rules(settings)
+    app.state.dummy_hash = DummyHash(settings.bcrypt_rounds)
     app.state.docker_check = SingleFlight(partial(docker_reachable, settings.docker_check_timeout_seconds))
 
     install_error_handlers(app)

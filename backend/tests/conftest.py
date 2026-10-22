@@ -60,6 +60,8 @@ def base_env(tmp_path: Path) -> dict[str, str]:
         "WORKSPACES_DIR": str(tmp_path / "workspaces"),
         "PACKAGES_DIR": str(tmp_path / "packages"),
         "DB_POOL_TIMEOUT_SECONDS": "3",
+        # Fast hashes in tests; the timing tests (B2-S01, C01, L02) use the real default of 12.
+        "BCRYPT_ROUNDS": "4",
     }
 
 
@@ -184,3 +186,35 @@ def empty_database() -> Iterator[str]:
     finally:
         with psycopg.connect(TEST_DATABASE_URL, autocommit=True) as conn:
             conn.execute(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')
+
+
+class FakeClock:
+    """Replaces app.core.clock: wall time (JWT expiry) and monotonic time (rate limiter) move only on advance()."""
+
+    def __init__(self) -> None:
+        from datetime import datetime, timezone
+
+        self.current = datetime(2026, 10, 22, 12, 0, 0, tzinfo=timezone.utc)
+        self.mono = 1_000_000.0
+
+    def now(self):
+        return self.current
+
+    def monotonic(self) -> float:
+        return self.mono
+
+    def advance(self, seconds: float) -> None:
+        from datetime import timedelta
+
+        self.current += timedelta(seconds=seconds)
+        self.mono += seconds
+
+
+@pytest.fixture
+def fake_clock(monkeypatch: pytest.MonkeyPatch) -> FakeClock:
+    from app.core import clock
+
+    fake = FakeClock()
+    monkeypatch.setattr(clock, "now", fake.now)
+    monkeypatch.setattr(clock, "monotonic", fake.monotonic)
+    return fake
