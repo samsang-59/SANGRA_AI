@@ -56,6 +56,18 @@ class Settings(BaseSettings):
     # Projects: at most this many per user.
     project_limit: int = Field(default=20, gt=0)
 
+    # Runs: a run waiting for approval or a hint longer than this is stopped (timed_out); the job runs every
+    # few minutes. The live stream checks for new events about once a second and pings every 15 seconds.
+    waiting_timeout_seconds: int = Field(default=3600, gt=0)
+    timeout_sweep_interval_seconds: float = Field(default=300.0, gt=0)
+    stream_poll_seconds: float = Field(default=1.0, gt=0)
+    stream_ping_seconds: float = Field(default=15.0, gt=0)
+
+    # Agent caps (04_backend_design.md 6.6): 3 rejects, 3 failed-test tries, 3 hints per run.
+    max_rejects: int = Field(default=3, gt=0)
+    max_failed_test_tries: int = Field(default=3, gt=0)
+    max_hints: int = Field(default=3, gt=0)
+
     # Passwords: bcrypt cost (each +1 doubles the time; 12 is about 0.25 s per hash).
     bcrypt_rounds: int = Field(default=12, ge=4, le=16)
 

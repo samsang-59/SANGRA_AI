@@ -7,7 +7,7 @@ You describe a bug in plain English. SANGRA_AI searches your code, finds the wro
 it undoes the change and tries again (up to 3 times). Your original code is never touched.
 
 > **Status:** implementation in progress, phase by phase (see [the plan](06_implementation_plan.md) and
-> [Implementation progress](#implementation-progress) below). Current phase: **B4 Projects** (awaiting review).
+> [Implementation progress](#implementation-progress) below). Current phase: **B5 Runs, events, live stream** (awaiting review).
 
 ---
 
@@ -149,7 +149,8 @@ A phase is done only when all of its tests pass **and** all earlier tests still 
 | B2 Security helpers, mailer, rate limiter, login check | Done (approved) | 29 of 29 pass |
 | B3 Auth feature (8 routes) | Done (approved) | 48 of 48 pass |
 | B4 Projects | Done (approved) | 46 of 46 pass |
-| B5 to B11, FE0 to FE7 | Not started | |
+| B5 Runs, events, state rules, live stream (fake agent) | Built, awaiting review | 100 of 100 pass (365 in total with B0 to B4) |
+| B6 to B11, FE0 to FE7 | Not started | |
 
 ### Running the backend
 
@@ -336,6 +337,64 @@ Decisions made where the design docs were silent (please check):
 8. B4-C03 (delete and edit at the same moment): when the edit runs first both answer 200 and the project still ends up deleted;
    when the delete runs first the edit gets 404. Never a 500.
 9. B4-X09 "not readable": the tests run as root, which can read everything, so the refusal of the operating system is simulated.
+
+### B5: Runs, events, state rules, live stream (notes)
+
+Built (the agent is a FAKE in this phase; the real one comes in B9):
+- The 8 run routes through all layers: `routers/runs.py`, `validators/run.py`, `controllers/run_controller.py`,
+  `services/run_service.py`, `repositories/run_repository.py`, `attempt_repository.py`, `event_repository.py`
+  (plus small reads in `test_result_repository.py` and `package_repository.py`).
+- `services/run_progress.py`: what the agent's steps use (events, status changes, hints, attempts, approval
+  requests) and the ONE shared finish function used by the agent, a cancel and the timeout job.
+- `agent/runner.py`: the AgentRunner (one background task per run; start, resume, cancel; an unexpected agent
+  error ends the run as `failed` / `internal_error`).
+- `services/jobs.py`: startup recovery and the 1-hour timeout sweeper.
+
+| Route | Answer |
+|---|---|
+| `POST /projects/{id}/runs` | 201 the run (status `started`); the agent works in the background. 403 `EMAIL_NOT_VERIFIED`, 404, 400 `LOCAL_PATH_NOT_ALLOWED` / `ZIP_REQUIRED`, 409 `ACTIVE_RUN_EXISTS` |
+| `GET /runs` | 200 `{ items, total, page, limit }`, newest first; `project_id`, `status` (or `active`), `page`, `limit` (at most 50) |
+| `GET /runs/{id}` | 200 the run with `attempts` (each with `edits`), `test_results` and `package` |
+| `GET /runs/{id}/events` | the live stream (Server-Sent Events, format below) |
+| `POST /runs/{id}/approval` | 200; 409 `RUN_STATE_INVALID` / `STALE_ATTEMPT` |
+| `POST /runs/{id}/hint` | 200; 409 `RUN_STATE_INVALID` |
+| `POST /runs/{id}/cancel` | 200 (stopped, `cancelled_by_user`); 409 `RUN_STATE_INVALID` |
+| `DELETE /runs/{id}` | 200 `{ id, deleted: true }`; 409 `RUN_STATE_INVALID` for an active run |
+
+Live stream: each event is `id: <sequence_number>`, `event: <event_type>`, `data: {sequence_number, event_type, message,
+details, attempt_id, created_at}` and a blank line. The `Last-Event-ID` header resumes after that number. `: ping` every
+15 seconds. The stream ends after the final `status_changed` event. Between checks (about once a second) it holds no
+database connection.
+
+Test results: `tests/test_b5_runs.py` and `tests/test_b5_stream_jobs.py`, 100 tests, all pass. Numbers on this machine:
+100 live streams on 100 runs got every event in order (B5-L01); while 100 streams waited, listing projects stayed under 16 ms
+and the pool needed 5 connections (B5-L02); 100 waiting streams cause about 100 database queries per second, one per stream
+per check (B5-L03); a replay of 5,000 events takes 0.5 s (B5-L04); 20 runs started at once all ran in parallel (B5-L05);
+100 runs in a row left no tasks behind (B5-L06); about 1,800 events per second can be saved (B5-L07); a history page of a
+user with 5,000 runs takes p95 10 ms (B5-L08). B5-L09 (a stream open 30 minutes with only pings): see below.
+
+Decisions made where the design docs were silent (please check):
+1. Starting a run takes JSON `{ "bug_description" }`, or, for zip projects, `multipart/form-data` with the fields
+   `bug_description` and `zip_file`. A zip over 50 MB is 422; a whole upload over 51 MB is refused with 413 while it
+   streams in (the rest is never read). The zip waits at `WORKSPACES_DIR/<user_id>/<run_id>/source.zip` for the agent.
+   A zip sent for a non-zip project is ignored.
+2. A hint is saved by ONE conditional update: only if the run is still waiting for a hint, the hint event is saved and the
+   run goes back to `searching` (the design lets the agent's wait step change the status; doing it in the same step as
+   the save stops a double click from sending two hints).
+3. Every status change and its `status_changed` event are saved in one transaction. Once a run has its final status, no
+   other event can be added, so the final `status_changed` event is always the last one.
+4. An accepted attempt keeps the status `waiting_for_approval` with `decision = accepted` until the agent applies it
+   (the table has no `accepted` status).
+5. An odd `Last-Event-ID` (not a number, negative, too big) counts as 0: the whole diary is sent again.
+6. Until the agent exists (B9), the real app ends a started run at once as `failed` / `internal_error` with the summary
+   "The agent is not part of this build yet". Tests use the fake agent.
+7. Startup recovery only ends runs created before this server process started and not run by it. If the database is down
+   at startup, recovery is tried again in the background every 5 seconds.
+8. B5-C02 (Accept and Cancel at the same moment): a cancel is allowed while a run is `applying`, so when the Accept lands
+   first both answer 200 and the run ends `stopped`; when the Cancel lands first the Accept gets 409. Never a mixed state.
+   B5-C06 (delete and cancel): when the cancel ends the run first the delete may then succeed; nothing is half deleted.
+9. The `package` and `apply-to-source` routes (part of B5-S01's table) come in B10 and are added to that test there.
+10. B5-L09 runs for 20 seconds in the normal test run (`SANGRA_SOAK_SECONDS` makes it longer).
 
 ---
 

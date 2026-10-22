@@ -63,6 +63,8 @@ def base_env(tmp_path: Path) -> dict[str, str]:
         "DB_POOL_TIMEOUT_SECONDS": "3",
         # Fast hashes in tests; the timing tests (B2-S01, C01, L02) use the real default of 12.
         "BCRYPT_ROUNDS": "4",
+        # The live stream checks every 50 ms in tests (1 second by default).
+        "STREAM_POLL_SECONDS": "0.05",
     }
 
 

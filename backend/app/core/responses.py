@@ -13,7 +13,7 @@ from app.core.errors import error_response
 from app.core.result import Result
 
 
-def _encode(value: Any) -> Any:
+def encode_value(value: Any) -> Any:
     # Only the types our database rows hold. (FastAPI's generic jsonable_encoder walks every value and
     # was about a third of the time of a project list, B4-L02.)
     if isinstance(value, (datetime, date)):
@@ -25,7 +25,7 @@ def _encode(value: Any) -> Any:
 
 class DataResponse(JSONResponse):
     def render(self, content: Any) -> bytes:
-        return json.dumps(content, default=_encode, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        return json.dumps(content, default=encode_value, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
 
 
 def ok(data: Any = None, status: int = 200) -> JSONResponse:
