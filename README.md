@@ -6,8 +6,8 @@ You describe a bug in plain English. SANGRA_AI searches your code, finds the wro
 **waits for your approval**, applies it to a safe copy, and runs your tests inside Docker. If the tests fail,
 it undoes the change and tries again (up to 3 times). Your original code is never touched.
 
-> **Status:** design phase complete. This repository currently holds the full system design and the
-> phase-wise implementation plan. Code is built next, phase by phase (see [the plan](06_implementation_plan.md)).
+> **Status:** implementation in progress, phase by phase (see [the plan](06_implementation_plan.md) and
+> [Implementation progress](#implementation-progress) below). Current phase: **B0 Foundation** (awaiting review).
 
 ---
 
@@ -137,6 +137,63 @@ Read them in this order:
 | Later | MCP server: a thin wrapper around the finished agent |
 
 A phase is done only when all of its tests pass **and** all earlier tests still pass.
+
+---
+
+## Implementation progress
+
+| Phase | State | Tests |
+|---|---|---|
+| B0 Foundation | Built, awaiting review | 48 of 49 pass. B0-L01 (load target) fails, see below |
+| B1 to B11, FE0 to FE7 | Not started | |
+
+### Running the backend
+
+Needs Python 3.10+ (developed on 3.13) and PostgreSQL. Docker is optional until B7 (health reports it as `unreachable`).
+
+```bash
+cd backend
+python -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
+cp .env.example .env        # then put real values in .env (the app refuses the placeholder JWT secret)
+.venv/bin/python -m app     # serves http://127.0.0.1:8000/api/v1/health
+```
+
+### Running the tests
+
+The tests use a real PostgreSQL test database (never SQLite):
+
+```bash
+createdb sangra_test   # owned by a role that can log in with a password
+export TEST_DATABASE_URL=postgresql://<user>:<password>@localhost:5432/sangra_test
+cd backend && .venv/bin/pytest -q
+```
+
+### B0: Foundation (notes)
+
+Built: settings from `.env`, checked at startup (`app/core/config.py`); logging with request id, user id and run id,
+secrets masked (`app/core/logging.py`); one error shape for every error (`app/core/errors.py`); request id and error-catching
+middleware, plus the body size limit, 1 MB normally and 50 MB on the zip upload route (`app/core/middleware.py`); CORS; the DB pool
+skeleton (`app/core/db.py`); `GET /api/v1/health` through router, controller, service and repository; the startup and shutdown
+order (`app/main.py`).
+
+Test results: `backend/tests/test_b0_foundation.py`. All F, X, S and R tests pass (48 tests with the per-setting cases).
+
+**B0-L01 fails and needs a decision.** Target: 500 parallel `/health` calls, p95 under 100 ms. Measured on a real server process
+(4-core container, one uvicorn process, a plain-socket client): all 500 answer 200, but p95 is about **140 to 160 ms** across runs.
+A bare FastAPI app with no middleware and no database gets about 60 to 100 ms on the same machine, so most of the time is the
+framework itself. One code fix is already in: parallel health calls share one database ping and one Docker ping, which took p95
+from about 1,200 ms to this level. Options: (a) change the target for a 500-request burst to p95 under 250 ms on one process and
+record why; (b) keep 100 ms and measure it at a set concurrency, for example 50 at a time; (c) keep it as a known failure.
+
+Decisions made where the design docs were silent (please check):
+1. Code lives in `backend/` (the frontend will go in `frontend/`). The layer folders follow 04_backend_design.md.
+2. Framework errors also use our error shape, with these extra codes: `METHOD_NOT_ALLOWED` (405), `PAYLOAD_TOO_LARGE` (413),
+   `SERVICE_UNAVAILABLE` (503, health when the database is down) and `BAD_REQUEST` (400).
+3. The health body is `{ "data": { "status": "ok" | "degraded", "database": "ok", "docker": "ok" | "unreachable" } }`.
+4. Startup does not wait for the database (the pool connects in the background), so `/health` can answer 503 while it is down.
+5. The connection pool is created in B0 because health needs it. B1 adds the pool tests.
+6. Every response carries an `X-Request-ID` header with the id used in the logs.
+7. The JWT secret must be at least 32 characters and must not be the placeholder from `.env.example` (B0-X02, B2-S03).
 
 ---
 
