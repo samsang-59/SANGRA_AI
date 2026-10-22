@@ -7,7 +7,7 @@ You describe a bug in plain English. SANGRA_AI searches your code, finds the wro
 it undoes the change and tries again (up to 3 times). Your original code is never touched.
 
 > **Status:** implementation in progress, phase by phase (see [the plan](06_implementation_plan.md) and
-> [Implementation progress](#implementation-progress) below). Current phase: **B2 Security helpers** (awaiting review).
+> [Implementation progress](#implementation-progress) below). Current phase: **B3 Auth feature** (awaiting review).
 
 ---
 
@@ -146,8 +146,9 @@ A phase is done only when all of its tests pass **and** all earlier tests still 
 |---|---|---|
 | B0 Foundation | Done (approved) | 49 of 49 pass |
 | B1 Database and migrations | Done (approved) | 93 of 93 pass |
-| B2 Security helpers, mailer, rate limiter, login check | Built, awaiting review | 29 of 29 pass (171 in total with B0 and B1) |
-| B3 to B11, FE0 to FE7 | Not started | |
+| B2 Security helpers, mailer, rate limiter, login check | Done (approved) | 29 of 29 pass |
+| B3 Auth feature (8 routes) | Built, awaiting review | 48 of 48 pass (219 in total with B0 to B2) |
+| B4 to B11, FE0 to FE7 | Not started | |
 
 ### Running the backend
 
@@ -257,6 +258,46 @@ Decisions made where the design docs were silent (please check):
 5. A login password longer than 72 bytes is never a match, and it still costs one bcrypt check (so timing tells nothing).
 6. The 2 warnings in the test run come from the Docker SDK: it does not close its socket when the Docker socket is missing.
    The socket is freed right away when the object goes, so nothing leaks.
+
+### B3: Auth feature (notes)
+
+Built: the 8 auth routes through all layers: `routers/auth.py` -> `validators/auth.py` -> `controllers/auth_controller.py`
+-> `services/auth_service.py` -> `repositories/user_repository.py`.
+
+| Route | Answer |
+|---|---|
+| `POST /auth/register` | 201 `{ data: { user, token } }`; a verification email with `FRONTEND_URL/verify-email?token=...` |
+| `POST /auth/login` | 200 `{ data: { user, token } }`, or 401 `INVALID_CREDENTIALS` (same message for unknown email and wrong password) |
+| `POST /auth/verify-email` | 200 `{ data: { message } }`, or 400 `TOKEN_INVALID_OR_EXPIRED` |
+| `POST /auth/resend-verification` (protected) | 200 (also "already verified"), or 429 `TOO_SOON` within 60 seconds |
+| `POST /auth/forgot-password` | always 200 "If this email exists, we sent a link ..." |
+| `POST /auth/reset-password` | 200, or 400 `TOKEN_INVALID_OR_EXPIRED`; all other unused reset links of the user stop working |
+| `POST /auth/change-password` (protected) | 200 (no new JWT), 400 `WRONG_OLD_PASSWORD` / `NEW_PASSWORD_SAME_AS_OLD` |
+| `GET /auth/me` (protected) | 200 the user (`id, name, email, is_email_verified, created_at`; never the password hash) |
+
+Rate limits are checked in the controllers (the limiter lives in core): login by IP and email, register by IP, forgot-password
+by IP and email, resend and change-password by user.
+
+Test results: `backend/tests/test_b3_auth.py`, 48 tests, all pass. Numbers: 50 logins at once at bcrypt cost 12 took 3.8 s with
+`/health` at most 60 ms meanwhile (B3-L01); `/auth/me` p95 2.4 ms over 1,000 calls (B3-L02); 500 parallel `/auth/me` in 0.8 s
+with no pool errors (B3-L03); forgot-password answers in 4.1 ms for a known email vs 2.0 ms for an unknown one (B3-X12).
+
+Fixed during this phase: B3-R01 (the database goes away, then comes back) was flaky. psycopg-pool retries a failed connection
+after 1, 2, 4, 8 ... seconds, so after an outage the app stayed broken for a while after the database was back (after a one-minute
+outage, up to about another minute). The pool now retries about once a second (`app/core/db.py`). The test was made stricter (a
+longer outage) and was shown to fail without the fix. psycopg-pool stays pinned and a test checks the setting is still in place.
+
+Decisions made where the design docs were silent (please check):
+1. Login returns `{ user, token }` like register (the design says "Return JWT"); the frontend can use the user at once.
+2. Token lifetimes are passed as seconds and added to the database's `now()` (repository rule 7: expiry uses the database clock).
+   `get_latest_token_time` also returns how many seconds ago the token was made, by the database clock, for the 60-second rule.
+3. The forgot-password email is sent in the background after the answer, so the answer time does not tell whether the email exists.
+   The app waits for such emails when it shuts down.
+4. Emails: surrounding spaces are trimmed, then the email must be valid and is lowercased. Names are trimmed, then 1-100 characters.
+   Email link tokens must be exactly 43 URL-safe characters (the length we create), else 422.
+5. Extra unknown fields in a request body are ignored.
+6. Gaps #1 in practice: an old JWT made in the SAME second as a password change still works (whole-second comparison, as proposed).
+   B3-X17 waits for the next second before changing the password.
 
 ---
 

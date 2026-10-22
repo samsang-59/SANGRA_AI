@@ -13,6 +13,7 @@ from functools import partial
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.core.background import BackgroundTasks
 from app.core.config import Settings, load_settings
 from app.core.db import close_pool, create_pool, open_pool
 from app.core.docker_check import docker_reachable
@@ -23,7 +24,7 @@ from app.core.rate_limit import RateLimiter, auth_rules
 from app.core.security import DummyHash
 from app.core.singleflight import SingleFlight
 from app.repositories import health_repository
-from app.routers import health
+from app.routers import auth, health
 
 logger = logging.getLogger("app.main")
 
@@ -45,6 +46,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         logger.info("SANGRA_AI started (mode=%s)", settings.app_mode)
         yield
     finally:
+        await app.state.background.drain()
         await close_pool(pool)
         logger.info("SANGRA_AI stopped")
 
@@ -54,6 +56,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app = FastAPI(title="SANGRA_AI", version="0.1.0", lifespan=lifespan)
     app.state.settings = settings
     app.state.mailer = build_mailer(settings)
+    app.state.background = BackgroundTasks()
     app.state.rate_limiter = RateLimiter()
     app.state.rate_rules = auth_rules(settings)
     app.state.dummy_hash = DummyHash(settings.bcrypt_rounds)
@@ -61,6 +64,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     install_error_handlers(app)
     app.include_router(health.router, prefix=API_PREFIX)
+    app.include_router(auth.router, prefix=API_PREFIX)
 
     # Added inner to outer: body limit, then request id / error catcher, then CORS (outermost,
     # so even 413 and 500 answers carry the CORS headers).

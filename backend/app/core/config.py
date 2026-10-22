@@ -48,6 +48,11 @@ class Settings(BaseSettings):
     max_body_bytes: int = Field(default=1_048_576, gt=0)
     max_upload_bytes: int = Field(default=52_428_800, gt=0)
 
+    # Email links (03_database_design.md section 7 / 04_backend_design.md AuthService).
+    verification_token_hours: int = Field(default=24, gt=0)
+    reset_token_minutes: int = Field(default=30, gt=0)
+    resend_verification_min_seconds: int = Field(default=60, ge=0)
+
     # Passwords: bcrypt cost (each +1 doubles the time; 12 is about 0.25 s per hash).
     bcrypt_rounds: int = Field(default=12, ge=4, le=16)
 

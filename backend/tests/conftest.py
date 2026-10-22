@@ -7,6 +7,7 @@ Two guards run in every test (B0-S05): every HTTP response body and every log li
 handler is searched for the known test secrets; finding one fails the test.
 """
 
+import asyncio
 import io
 import os
 from collections.abc import AsyncIterator, Iterator
@@ -98,8 +99,10 @@ def log_output() -> Iterator[io.StringIO]:
 
 
 @pytest.fixture
-def settings(make_settings) -> Settings:
-    return make_settings()
+def settings(make_settings, request: pytest.FixtureRequest) -> Settings:
+    """Valid test settings. A test can change some with @pytest.mark.settings(NAME="value", ...)."""
+    marker = request.node.get_closest_marker("settings")
+    return make_settings(dict(marker.kwargs) if marker else None)
 
 
 async def _check_response_for_secrets(response: httpx.Response) -> None:
@@ -189,25 +192,27 @@ def empty_database() -> Iterator[str]:
 
 
 class FakeClock:
-    """Replaces app.core.clock: wall time (JWT expiry) and monotonic time (rate limiter) move only on advance()."""
+    """Replaces app.core.clock. It follows the real time plus an offset that only advance() changes.
+
+    Following real time matters: the database clock (now()) cannot be faked, and a JWT must never look
+    older than a password_changed_at the database just wrote.
+    """
 
     def __init__(self) -> None:
-        from datetime import datetime, timezone
-
-        self.current = datetime(2026, 10, 22, 12, 0, 0, tzinfo=timezone.utc)
-        self.mono = 1_000_000.0
+        self.offset = 0.0
 
     def now(self):
-        return self.current
+        from datetime import datetime, timedelta, timezone
+
+        return datetime.now(timezone.utc) + timedelta(seconds=self.offset)
 
     def monotonic(self) -> float:
-        return self.mono
+        import time
+
+        return time.monotonic() + self.offset
 
     def advance(self, seconds: float) -> None:
-        from datetime import timedelta
-
-        self.current += timedelta(seconds=seconds)
-        self.mono += seconds
+        self.offset += seconds
 
 
 @pytest.fixture
@@ -218,3 +223,109 @@ def fake_clock(monkeypatch: pytest.MonkeyPatch) -> FakeClock:
     monkeypatch.setattr(clock, "now", fake.now)
     monkeypatch.setattr(clock, "monotonic", fake.monotonic)
     return fake
+
+
+class FakeMailer:
+    """Keeps every email in memory (B2/B3 tests). fail=True makes sending raise."""
+
+    def __init__(self, fail: bool = False) -> None:
+        self.sent: list[dict] = []
+        self.fail = fail
+
+    async def send_email(self, to: str, subject: str, body: str) -> None:
+        if self.fail:
+            raise ConnectionError("fake mailer is down")
+        self.sent.append({"to": to, "subject": subject, "body": body})
+
+    def tokens(self, to: str | None = None, page: str | None = None) -> list[str]:
+        import re
+
+        found = []
+        for mail in self.sent:
+            if to is None or mail["to"] == to:
+                for link_page, token in re.findall(r"/([a-z-]+)\?token=([A-Za-z0-9_-]+)", mail["body"]):
+                    if page is None or page == link_page:
+                        found.append(token)
+        return found
+
+
+@pytest.fixture
+def mailer(app: FastAPI) -> FakeMailer:
+    fake = FakeMailer()
+    app.state.mailer = fake
+    return fake
+
+
+class DatabaseProxy:
+    """A TCP proxy in front of PostgreSQL, so a test can make the database "go away" and come back."""
+
+    def __init__(self, target_host: str, target_port: int) -> None:
+        self.target = (target_host, target_port)
+        self.port = 0
+        self.up = True
+        self._server: asyncio.base_events.Server | None = None
+        self._writers: set = set()
+
+    async def start(self) -> None:
+        self._server = await asyncio.start_server(self._handle, "127.0.0.1", 0)
+        self.port = self._server.sockets[0].getsockname()[1]
+
+    async def _handle(self, reader, writer) -> None:
+        if not self.up:
+            writer.close()
+            return
+        try:
+            upstream_reader, upstream_writer = await asyncio.open_connection(*self.target)
+        except OSError:
+            writer.close()
+            return
+        self._writers.update({writer, upstream_writer})
+
+        async def pipe(src, dst):
+            try:
+                while data := await src.read(65536):
+                    dst.write(data)
+                    await dst.drain()
+            except (ConnectionError, OSError):
+                pass
+            finally:
+                dst.close()
+
+        await asyncio.gather(pipe(reader, upstream_writer), pipe(upstream_reader, writer))
+
+    def go_down(self) -> None:
+        """Refuses new connections and cuts every open one."""
+        self.up = False
+        for writer in list(self._writers):
+            writer.close()
+        self._writers.clear()
+
+    def come_back(self) -> None:
+        self.up = True
+
+    async def stop(self) -> None:
+        self.go_down()
+        if self._server:
+            self._server.close()
+            await self._server.wait_closed()
+
+
+@pytest.fixture
+async def db_proxy(migrated_database: str):
+    from urllib.parse import urlsplit
+
+    parts = urlsplit(migrated_database)
+    proxy = DatabaseProxy(parts.hostname or "localhost", parts.port or 5432)
+    await proxy.start()
+    try:
+        yield proxy
+    finally:
+        await proxy.stop()
+
+
+def url_through_proxy(url: str, port: int) -> str:
+    from urllib.parse import urlsplit, urlunsplit
+
+    parts = urlsplit(url)
+    credentials = parts.netloc.rsplit("@", 1)[0]
+    return urlunsplit(parts._replace(netloc=f"{credentials}@127.0.0.1:{port}"))
