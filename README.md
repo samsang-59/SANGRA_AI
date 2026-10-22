@@ -372,7 +372,7 @@ Test results: `tests/test_b5_runs.py` and `tests/test_b5_stream_jobs.py`, 100 te
 and the pool needed 5 connections (B5-L02); 100 waiting streams cause about 100 database queries per second, one per stream
 per check (B5-L03); a replay of 5,000 events takes 0.5 s (B5-L04); 20 runs started at once all ran in parallel (B5-L05);
 100 runs in a row left no tasks behind (B5-L06); about 1,800 events per second can be saved (B5-L07); a history page of a
-user with 5,000 runs takes p95 10 ms (B5-L08). B5-L09 (a stream open 30 minutes with only pings): see below.
+user with 5,000 runs takes p95 10 ms (B5-L08). B5-L09: a stream held open for the full 30 minutes with only pings stayed open, and the server's memory changed by 47 KB (run once with `SANGRA_SOAK_SECONDS=1800`).
 
 Decisions made where the design docs were silent (please check):
 1. Starting a run takes JSON `{ "bug_description" }`, or, for zip projects, `multipart/form-data` with the fields
