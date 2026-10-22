@@ -7,7 +7,7 @@ You describe a bug in plain English. SANGRA_AI searches your code, finds the wro
 it undoes the change and tries again (up to 3 times). Your original code is never touched.
 
 > **Status:** implementation in progress, phase by phase (see [the plan](06_implementation_plan.md) and
-> [Implementation progress](#implementation-progress) below). Current phase: **B2 Security helpers** (awaiting review).
+> [Implementation progress](#implementation-progress) below). Current phase: **B6 Workspace manager and code tools** (awaiting review).
 
 ---
 
@@ -146,8 +146,12 @@ A phase is done only when all of its tests pass **and** all earlier tests still 
 |---|---|---|
 | B0 Foundation | Done (approved) | 49 of 49 pass |
 | B1 Database and migrations | Done (approved) | 93 of 93 pass |
-| B2 Security helpers, mailer, rate limiter, login check | Built, awaiting review | 29 of 29 pass (171 in total with B0 and B1) |
-| B3 to B11, FE0 to FE7 | Not started | |
+| B2 Security helpers, mailer, rate limiter, login check | Done (approved) | 29 of 29 pass |
+| B3 Auth feature (8 routes) | Done (approved) | 48 of 48 pass |
+| B4 Projects | Done (approved) | 46 of 46 pass |
+| B5 Runs, events, state rules, live stream (fake agent) | Done (approved) | 100 of 100 pass |
+| B6 Workspace manager and the 3 read-only code tools | Built, awaiting review | 59 of 59 pass (424 in total with B0 to B5) |
+| B7 to B11, FE0 to FE7 | Not started | |
 
 ### Running the backend
 
@@ -257,6 +261,188 @@ Decisions made where the design docs were silent (please check):
 5. A login password longer than 72 bytes is never a match, and it still costs one bcrypt check (so timing tells nothing).
 6. The 2 warnings in the test run come from the Docker SDK: it does not close its socket when the Docker socket is missing.
    The socket is freed right away when the object goes, so nothing leaks.
+
+### B3: Auth feature (notes)
+
+Built: the 8 auth routes through all layers: `routers/auth.py` -> `validators/auth.py` -> `controllers/auth_controller.py`
+-> `services/auth_service.py` -> `repositories/user_repository.py`.
+
+| Route | Answer |
+|---|---|
+| `POST /auth/register` | 201 `{ data: { user, token } }`; a verification email with `FRONTEND_URL/verify-email?token=...` |
+| `POST /auth/login` | 200 `{ data: { user, token } }`, or 401 `INVALID_CREDENTIALS` (same message for unknown email and wrong password) |
+| `POST /auth/verify-email` | 200 `{ data: { message } }`, or 400 `TOKEN_INVALID_OR_EXPIRED` |
+| `POST /auth/resend-verification` (protected) | 200 (also "already verified"), or 429 `TOO_SOON` within 60 seconds |
+| `POST /auth/forgot-password` | always 200 "If this email exists, we sent a link ..." |
+| `POST /auth/reset-password` | 200, or 400 `TOKEN_INVALID_OR_EXPIRED`; all other unused reset links of the user stop working |
+| `POST /auth/change-password` (protected) | 200 (no new JWT), 400 `WRONG_OLD_PASSWORD` / `NEW_PASSWORD_SAME_AS_OLD` |
+| `GET /auth/me` (protected) | 200 the user (`id, name, email, is_email_verified, created_at`; never the password hash) |
+
+Rate limits are checked in the controllers (the limiter lives in core): login by IP and email, register by IP, forgot-password
+by IP and email, resend and change-password by user.
+
+Test results: `backend/tests/test_b3_auth.py`, 48 tests, all pass. Numbers: 50 logins at once at bcrypt cost 12 took 3.8 s with
+`/health` at most 60 ms meanwhile (B3-L01); `/auth/me` p95 2.4 ms over 1,000 calls (B3-L02); 500 parallel `/auth/me` in 0.8 s
+with no pool errors (B3-L03); forgot-password answers in 4.1 ms for a known email vs 2.0 ms for an unknown one (B3-X12).
+
+Fixed during this phase: B3-R01 (the database goes away, then comes back) was flaky. psycopg-pool retries a failed connection
+after 1, 2, 4, 8 ... seconds, so after an outage the app stayed broken for a while after the database was back (after a one-minute
+outage, up to about another minute). The pool now retries about once a second (`app/core/db.py`). The test was made stricter (a
+longer outage) and was shown to fail without the fix. psycopg-pool stays pinned and a test checks the setting is still in place.
+
+Decisions made where the design docs were silent (please check):
+1. Login returns `{ user, token }` like register (the design says "Return JWT"); the frontend can use the user at once.
+2. Token lifetimes are passed as seconds and added to the database's `now()` (repository rule 7: expiry uses the database clock).
+   `get_latest_token_time` also returns how many seconds ago the token was made, by the database clock, for the 60-second rule.
+3. The forgot-password email is sent in the background after the answer, so the answer time does not tell whether the email exists.
+   The app waits for such emails when it shuts down.
+4. Emails: surrounding spaces are trimmed, then the email must be valid and is lowercased. Names are trimmed, then 1-100 characters.
+   Email link tokens must be exactly 43 URL-safe characters (the length we create), else 422.
+5. Extra unknown fields in a request body are ignored.
+6. Gaps #1 in practice: an old JWT made in the SAME second as a password change still works (whole-second comparison, as proposed).
+   B3-X17 waits for the next second before changing the password.
+
+### B4: Projects (notes)
+
+Built: the 5 project routes through all layers (`routers/projects.py`, `validators/project.py` and `validators/project_rules.py`,
+`controllers/project_controller.py`, `services/project_service.py`, `repositories/project_repository.py`), plus
+`services/cleanup_service.py`, which runs AFTER the database commit of a delete (package files now, LangGraph data from B9).
+
+| Route | Answer |
+|---|---|
+| `POST /projects` | 201 the project; 400 `LOCAL_PATH_NOT_ALLOWED` / `PATH_NOT_FOUND`; 409 `PROJECT_LIMIT_REACHED` (20) |
+| `GET /projects` | 200 `{ items, total }`, newest first, only the user's own |
+| `GET /projects/{id}` | 200, or 404 `NOT_FOUND` (same answer for "not yours" and "does not exist") |
+| `PATCH /projects/{id}` | 200; only the fields sent change; 400 `INVALID_PROJECT_CONFIG` if the merged project is not valid |
+| `DELETE /projects/{id}` | 200 `{ id, deleted: true }`; 409 `PROJECT_HAS_ACTIVE_RUN`; its runs are deleted too |
+
+Test results: `backend/tests/test_b4_projects.py`, 46 of 46 pass. The list of 20 projects: p95 4.4 ms (B4-L01).
+
+**B4-L02 measured at a fixed concurrency (option b, decided after review).** The plan's form, 500 list calls at the same
+moment, measured p95 about 740 to 940 ms on one process (about 450 list calls per second; each one checks the login, runs 3
+queries and sends 20 rows). The test now sends the 500 calls with a fixed number in flight. With 100 in flight the result sat
+right on the 300 ms line on this machine (226 to 318 ms over three runs, so the test would be flaky); with **50 in flight p95 is
+about 105 to 130 ms**, so 50 is used. One code fix went in first: JSON responses no longer go through FastAPI's generic encoder.
+
+Decisions made where the design docs were silent (please check):
+1. GitHub URLs must be exactly `https://github.com/<owner>/<repo>` (a `.git` ending is allowed; no trailing slash, no extra path,
+   no query, no user name). Local paths must be absolute (Linux or Windows style) and must not contain `..` or a null byte.
+2. Branch names: letters, digits, `.`, `_`, `/`, `-`; not starting with `-`, `/` or `.`; no `..` or `//`; not ending with `/`,
+   `.` or `.lock`; at most 255 characters. An empty branch means the repo's default branch.
+3. A zip project keeps no `source_reference` (one that is sent is ignored), also when a project is switched to zip.
+4. Names and test commands are trimmed before the length check.
+5. On PATCH, the local-folder checks (local mode, the folder exists) run only when `source_type` or `source_reference` change,
+   so renaming a project whose folder was moved still works. Sending `null` for name, language, source type or test command is 422.
+6. `GET /projects` returns all projects of the user (at most 20), so it has no page parameters.
+7. Package files are only ever deleted inside `PACKAGES_DIR`, whatever path the database holds.
+8. B4-C03 (delete and edit at the same moment): when the edit runs first both answer 200 and the project still ends up deleted;
+   when the delete runs first the edit gets 404. Never a 500.
+9. B4-X09 "not readable": the tests run as root, which can read everything, so the refusal of the operating system is simulated.
+
+### B5: Runs, events, state rules, live stream (notes)
+
+Built (the agent is a FAKE in this phase; the real one comes in B9):
+- The 8 run routes through all layers: `routers/runs.py`, `validators/run.py`, `controllers/run_controller.py`,
+  `services/run_service.py`, `repositories/run_repository.py`, `attempt_repository.py`, `event_repository.py`
+  (plus small reads in `test_result_repository.py` and `package_repository.py`).
+- `services/run_progress.py`: what the agent's steps use (events, status changes, hints, attempts, approval
+  requests) and the ONE shared finish function used by the agent, a cancel and the timeout job.
+- `agent/runner.py`: the AgentRunner (one background task per run; start, resume, cancel; an unexpected agent
+  error ends the run as `failed` / `internal_error`).
+- `services/jobs.py`: startup recovery and the 1-hour timeout sweeper.
+
+| Route | Answer |
+|---|---|
+| `POST /projects/{id}/runs` | 201 the run (status `started`); the agent works in the background. 403 `EMAIL_NOT_VERIFIED`, 404, 400 `LOCAL_PATH_NOT_ALLOWED` / `ZIP_REQUIRED`, 409 `ACTIVE_RUN_EXISTS` |
+| `GET /runs` | 200 `{ items, total, page, limit }`, newest first; `project_id`, `status` (or `active`), `page`, `limit` (at most 50) |
+| `GET /runs/{id}` | 200 the run with `attempts` (each with `edits`), `test_results` and `package` |
+| `GET /runs/{id}/events` | the live stream (Server-Sent Events, format below) |
+| `POST /runs/{id}/approval` | 200; 409 `RUN_STATE_INVALID` / `STALE_ATTEMPT` |
+| `POST /runs/{id}/hint` | 200; 409 `RUN_STATE_INVALID` |
+| `POST /runs/{id}/cancel` | 200 (stopped, `cancelled_by_user`); 409 `RUN_STATE_INVALID` |
+| `DELETE /runs/{id}` | 200 `{ id, deleted: true }`; 409 `RUN_STATE_INVALID` for an active run |
+
+Live stream: each event is `id: <sequence_number>`, `event: <event_type>`, `data: {sequence_number, event_type, message,
+details, attempt_id, created_at}` and a blank line. The `Last-Event-ID` header resumes after that number. `: ping` every
+15 seconds. The stream ends after the final `status_changed` event. Between checks (about once a second) it holds no
+database connection.
+
+Test results: `tests/test_b5_runs.py` and `tests/test_b5_stream_jobs.py`, 100 tests, all pass. Numbers on this machine:
+100 live streams on 100 runs got every event in order (B5-L01); while 100 streams waited, listing projects stayed under 16 ms
+and the pool needed 5 connections (B5-L02); 100 waiting streams cause about 100 database queries per second, one per stream
+per check (B5-L03); a replay of 5,000 events takes 0.5 s (B5-L04); 20 runs started at once all ran in parallel (B5-L05);
+100 runs in a row left no tasks behind (B5-L06); about 1,800 events per second can be saved (B5-L07); a history page of a
+user with 5,000 runs takes p95 10 ms (B5-L08). B5-L09 (a stream open 30 minutes with only pings): see below.
+
+Decisions made where the design docs were silent (please check):
+1. Starting a run takes JSON `{ "bug_description" }`, or, for zip projects, `multipart/form-data` with the fields
+   `bug_description` and `zip_file`. A zip over 50 MB is 422; a whole upload over 51 MB is refused with 413 while it
+   streams in (the rest is never read). The zip waits at `WORKSPACES_DIR/<user_id>/<run_id>/source.zip` for the agent.
+   A zip sent for a non-zip project is ignored.
+2. A hint is saved by ONE conditional update: only if the run is still waiting for a hint, the hint event is saved and the
+   run goes back to `searching` (the design lets the agent's wait step change the status; doing it in the same step as
+   the save stops a double click from sending two hints).
+3. Every status change and its `status_changed` event are saved in one transaction. Once a run has its final status, no
+   other event can be added, so the final `status_changed` event is always the last one.
+4. An accepted attempt keeps the status `waiting_for_approval` with `decision = accepted` until the agent applies it
+   (the table has no `accepted` status).
+5. An odd `Last-Event-ID` (not a number, negative, too big) counts as 0: the whole diary is sent again.
+6. Until the agent exists (B9), the real app ends a started run at once as `failed` / `internal_error` with the summary
+   "The agent is not part of this build yet". Tests use the fake agent.
+7. Startup recovery only ends runs created before this server process started and not run by it. If the database is down
+   at startup, recovery is tried again in the background every 5 seconds.
+8. B5-C02 (Accept and Cancel at the same moment): a cancel is allowed while a run is `applying`, so when the Accept lands
+   first both answer 200 and the run ends `stopped`; when the Cancel lands first the Accept gets 409. Never a mixed state.
+   B5-C06 (delete and cancel): when the cancel ends the run first the delete may then succeed; nothing is half deleted.
+9. The `package` and `apply-to-source` routes (part of B5-S01's table) come in B10 and are added to that test there.
+10. B5-L09 runs for 20 seconds in the normal test run (`SANGRA_SOAK_SECONDS` makes it longer).
+
+### B6: Workspace manager and the 3 read-only code tools (notes)
+
+Built (no LLM yet; the agent uses these from B9):
+- `app/runners/workspace_manager.py`: builds `WORKSPACES_DIR/<user_id>/<run_id>/code/` (plus `artifacts/`) from a public
+  GitHub repo (shallow clone of the chosen or default branch, the commit is recorded), a local folder or an uploaded zip;
+  makes it a git repository (`git init` + a first commit of everything copied); the path guard `safe_path()`; undo
+  (`git reset --hard` + `git clean`, then checks the copy is clean, else `undo_failed`); the diff (the patch); delete;
+  and the age-based cleanup of old run folders.
+- `app/agent/tools/code_tools.py`: `search_files`, `search_in_file`, `read_file_lines`. Read-only, size-capped, they
+  answer `{ "error": ... }` for a bad request instead of failing.
+
+Safety (Gaps #5 and #6 are implemented):
+- git always runs without system or global config, without hooks or fsmonitor, HTTPS only, with no password prompt, and
+  with only the proxy and CA variables of the environment (never our secrets). Commands are argument lists, never shell text.
+- A local folder or zip never brings its own `.git` folder: the copy gets a fresh repository of ours, so a hostile
+  `.git/config` (fsmonitor, filters, sshCommand) or hook can never run. Tested with a zip and with a local folder.
+- Zips: entries with `..`, absolute or drive paths, symlink entries and password-protected entries are refused; the total
+  size and the number of files are limited, and the bytes are counted while unpacking (a zip that lies about its sizes
+  is refused).
+- Local copies never follow or copy symlinks, sockets or devices, and skip `target`, `build`, `node_modules`,
+  `__pycache__`, `.venv` and `.git`.
+- The path guard refuses `..` (also `%2e%2e`), absolute and drive paths, `\`, null bytes, very long paths, anything
+  inside `.git/`, and symlinks that lead out of `code/`.
+
+Test results: `tests/test_b6_workspace.py`, 59 tests, all pass (the clone tests use the tiny public repo
+`octocat/Hello-World`, so they need internet). Numbers: `search_files` over 50,000 files 0.7 to 0.9 s (B6-L01);
+200 lines of a 1 MB file in under 9 ms (B6-L02); 10 parallel copies of a 100 MB folder in 12 to 15 s using about 2 GB
+(copy + git objects), all of it freed again after delete (B6-L03).
+
+Decisions made where the design docs were silent (please check):
+1. Limits (all settings): the copy may be at most 500 MB and 50,000 files; a clone may take at most 5 minutes; leftover
+   run folders older than 24 hours are removed by the cleanup (wired to a job in B10).
+2. A local folder that is already a git repository is copied WITHOUT its `.git` folder and gets our own fresh repository
+   (the safest reading of Gaps #5; undo and the patch only need our first commit). `source_commit` is filled only for GitHub.
+3. Files ignored by `.gitignore` are still copied and recorded in our first commit (`git add --force`), so undo restores
+   them and tests that need them keep working.
+4. Search is case-insensitive for English letters (the bytes are lower-cased); non-English letters must match exactly.
+   Binary files are recognised by a zero byte in the first 8 KB. Lines in tool answers are cut at 300 characters.
+5. Every tool answer is capped at 16,000 characters (setting `TOOL_OUTPUT_MAX_CHARS`). 200 lines of typical code fit;
+   200 lines of 100 characters do not, and the answer is cut from the end with `truncated: true`. The final number is
+   checked against the model's context in B8 (B8-X08).
+6. **Open question:** a zip is unpacked exactly as it is. A zip downloaded from GitHub ("Download ZIP") has one top folder
+   (for example `repo-main/`), so the test command would run one level too high. Should a single top folder be removed
+   when unpacking? (Not done; the design does not say.)
+7. B6-X05 "not readable" and B6-X15 "locked file": the tests run as root, so "not readable" is simulated, and the locked
+   file uses `chattr +i` (Linux).
 
 ---
 

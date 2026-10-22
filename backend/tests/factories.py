@@ -83,3 +83,13 @@ async def insert_package(conn: AsyncConnection, run_id: int, **overrides) -> dic
 
 def _now_plus(**delta) -> object:
     return datetime.now(timezone.utc) + timedelta(**delta)
+
+
+async def user_with_token(conn: AsyncConnection, **overrides) -> dict:
+    """A user inserted directly (no bcrypt, no email) plus a valid JWT and the matching headers."""
+    from app.core.security import create_access_token
+    from tests.conftest import TEST_JWT_SECRET
+
+    user = await insert_user(conn, **overrides)
+    token = create_access_token(user["id"], TEST_JWT_SECRET, 24)
+    return {**user, "token": token, "headers": {"Authorization": f"Bearer {token}"}}

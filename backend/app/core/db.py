@@ -8,10 +8,17 @@ import logging
 
 from psycopg.rows import dict_row
 from psycopg_pool import AsyncConnectionPool
+from psycopg_pool.base import AttemptWithBackoff
 
 from app.core.config import Settings
 
 logger = logging.getLogger("app.db")
+
+# psycopg-pool retries a failed connection after 1, 2, 4, 8 ... seconds (doubling, for up to 5 minutes).
+# After a database outage of one minute, the app would stay broken for up to another minute after the
+# database is back (B3-R01, B11-R01). A steady retry about once a second (with a little jitter) is cheap
+# and brings the app back right away. psycopg-pool is pinned; a test checks this setting still exists.
+AttemptWithBackoff.DELAY_BACKOFF = 1.0
 
 
 def create_pool(settings: Settings) -> AsyncConnectionPool:
