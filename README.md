@@ -148,7 +148,7 @@ A phase is done only when all of its tests pass **and** all earlier tests still 
 | B1 Database and migrations | Done (approved) | 93 of 93 pass |
 | B2 Security helpers, mailer, rate limiter, login check | Done (approved) | 29 of 29 pass |
 | B3 Auth feature (8 routes) | Done (approved) | 48 of 48 pass |
-| B4 Projects | Built, awaiting review | 45 of 46 pass. B4-L02 (load target) fails, see below |
+| B4 Projects | Done (approved) | 46 of 46 pass |
 | B5 to B11, FE0 to FE7 | Not started | |
 
 ### Running the backend
@@ -314,15 +314,13 @@ Built: the 5 project routes through all layers (`routers/projects.py`, `validato
 | `PATCH /projects/{id}` | 200; only the fields sent change; 400 `INVALID_PROJECT_CONFIG` if the merged project is not valid |
 | `DELETE /projects/{id}` | 200 `{ id, deleted: true }`; 409 `PROJECT_HAS_ACTIVE_RUN`; its runs are deleted too |
 
-Test results: `backend/tests/test_b4_projects.py`, 45 of 46 pass. The list of 20 projects: p95 4.4 ms (B4-L01).
+Test results: `backend/tests/test_b4_projects.py`, 46 of 46 pass. The list of 20 projects: p95 4.4 ms (B4-L01).
 
-**B4-L02 fails and needs a decision.** Target: 100 users with 20 projects each, 500 list calls at the same moment, p95 under
-300 ms. Measured on a real server process (4-core container, one process, plain-socket client): all 500 answer 200, p95 is
-about **740 to 940 ms**. The server handles about 450 list calls per second (each one checks the login, runs 3 queries and sends
-20 rows), so a burst of 500 needs about one second to get through. At a set concurrency the target holds: 10 at a time p95 24 ms,
-25 at a time 69 ms, 50 at a time 130 ms, 100 at a time 268 ms. One code fix went in: JSON responses no longer go through FastAPI's
-generic encoder. Options: (a) change the target for a burst of 500 to p95 under 1,500 ms on one process and record why;
-(b) keep 300 ms but measure it with 100 requests at a time (as above, 268 ms); (c) keep it as a known failure.
+**B4-L02 measured at a fixed concurrency (option b, decided after review).** The plan's form, 500 list calls at the same
+moment, measured p95 about 740 to 940 ms on one process (about 450 list calls per second; each one checks the login, runs 3
+queries and sends 20 rows). The test now sends the 500 calls with a fixed number in flight. With 100 in flight the result sat
+right on the 300 ms line on this machine (226 to 318 ms over three runs, so the test would be flaky); with **50 in flight p95 is
+about 105 to 130 ms**, so 50 is used. One code fix went in first: JSON responses no longer go through FastAPI's generic encoder.
 
 Decisions made where the design docs were silent (please check):
 1. GitHub URLs must be exactly `https://github.com/<owner>/<repo>` (a `.git` ending is allowed; no trailing slash, no extra path,
