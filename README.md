@@ -6,8 +6,8 @@ You describe a bug in plain English. SANGRA_AI searches your code, finds the wro
 **waits for your approval**, applies it to a safe copy, and runs your tests inside Docker. If the tests fail,
 it undoes the change and tries again (up to 3 times). Your original code is never touched.
 
-> **Status:** design phase complete. This repository currently holds the full system design and the
-> phase-wise implementation plan. Code is built next, phase by phase (see [the plan](06_implementation_plan.md)).
+> **Status:** implementation in progress, phase by phase (see [the plan](06_implementation_plan.md) and
+> [Implementation progress](#implementation-progress) below). Current phase: **B2 Security helpers** (awaiting review).
 
 ---
 
@@ -137,6 +137,126 @@ Read them in this order:
 | Later | MCP server: a thin wrapper around the finished agent |
 
 A phase is done only when all of its tests pass **and** all earlier tests still pass.
+
+---
+
+## Implementation progress
+
+| Phase | State | Tests |
+|---|---|---|
+| B0 Foundation | Done (approved) | 49 of 49 pass |
+| B1 Database and migrations | Done (approved) | 93 of 93 pass |
+| B2 Security helpers, mailer, rate limiter, login check | Built, awaiting review | 29 of 29 pass (171 in total with B0 and B1) |
+| B3 to B11, FE0 to FE7 | Not started | |
+
+### Running the backend
+
+Needs Python 3.10+ (developed on 3.13) and PostgreSQL. Docker is optional until B7 (health reports it as `unreachable`).
+
+```bash
+cd backend
+python -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
+cp .env.example .env              # then put real values in .env (the app refuses the placeholder JWT secret)
+.venv/bin/python -m app.migrate   # creates or updates the tables (run by hand; the app never changes tables itself)
+.venv/bin/python -m app           # serves http://127.0.0.1:8000/api/v1/health
+```
+
+### Running the tests
+
+The tests use a real PostgreSQL test database (never SQLite):
+
+```bash
+createdb sangra_test   # owned by a role that can log in with a password
+export TEST_DATABASE_URL=postgresql://<user>:<password>@localhost:5432/sangra_test
+cd backend && .venv/bin/pytest -q
+```
+
+### B0: Foundation (notes)
+
+Built: settings from `.env`, checked at startup (`app/core/config.py`); logging with request id, user id and run id,
+secrets masked (`app/core/logging.py`); one error shape for every error (`app/core/errors.py`); request id and error-catching
+middleware, plus the body size limit, 1 MB normally and 50 MB on the zip upload route (`app/core/middleware.py`); CORS; the DB pool
+skeleton (`app/core/db.py`); `GET /api/v1/health` through router, controller, service and repository; the startup and shutdown
+order (`app/main.py`).
+
+Test results: `backend/tests/test_b0_foundation.py`. All 49 tests pass (the per-setting cases count separately).
+
+**B0-L01 target changed from 100 ms to 250 ms (decided after review).** Test: 500 `/health` calls at the same moment against a
+real server process (4-core container, one uvicorn process, a plain-socket client). All 500 answer 200; p95 is about 140 to 200 ms
+across runs. A bare FastAPI app with no middleware and no database gets about 60 to 100 ms on the same machine, so the 100 ms
+target was below what the framework itself can do in one process. One code fix went in first: health calls that arrive together
+share one database ping and one Docker ping (p95 went from about 1,200 ms to the level above).
+
+Decisions made where the design docs were silent (please check):
+1. Code lives in `backend/` (the frontend will go in `frontend/`). The layer folders follow 04_backend_design.md.
+2. Framework errors also use our error shape, with these extra codes: `METHOD_NOT_ALLOWED` (405), `PAYLOAD_TOO_LARGE` (413),
+   `SERVICE_UNAVAILABLE` (503, health when the database is down) and `BAD_REQUEST` (400).
+3. The health body is `{ "data": { "status": "ok" | "degraded", "database": "ok", "docker": "ok" | "unreachable" } }`.
+4. Startup does not wait for the database (the pool connects in the background), so `/health` can answer 503 while it is down.
+5. The connection pool is created in B0 because health needs it. B1 adds the pool tests.
+6. Every response carries an `X-Request-ID` header with the id used in the logs.
+7. The JWT secret must be at least 32 characters and must not be the placeholder from `.env.example` (B0-X02, B2-S03).
+
+### B1: Database and migrations (notes)
+
+Built: `backend/migrations/001_initial_schema.sql` (the 9 tables of 03_database_design.md with their checks and the suggested
+indexes); the migration command `python -m app.migrate` (and `--status`), which keeps a `schema_migrations` table with a checksum
+per applied file; the connection pool now checks a connection before handing it out.
+
+Migration command rules: files are `NNN_name.sql`, numbered with no gaps or repeats; each file runs in one transaction (an error
+rolls back the whole file and it is not recorded); a changed or missing applied file is refused; an advisory lock stops two
+commands from running at the same moment; a database that cannot be reached gives a clear message and exit code 1.
+
+Test results: `backend/tests/test_b1_database.py`, 93 tests, all pass. Load numbers (10,000 runs for 100 users, 100,000 events):
+history page of one user 0.6 ms (uses `runs_user_created_idx`); events after N 0.5 ms; stuck waiting runs 0.6 ms; old workspaces
+4 ms; expired packages 0.7 ms; a later migration (add a column and an index) on that data 21 ms.
+
+Decisions made where the design docs were silent (please check):
+1. `NOT NULL` is added to every column that has a fixed list of values (a `CHECK ... IN` alone lets NULL through), except
+   `attempts.decision`, which the design marks as nullable. Also `NOT NULL` on `created_at`, `updated_at`, `runs.started_at`
+   (all default to now()), `run_events.message`, the numbering columns, the line numbers, `packages.size_bytes` and
+   `packages.expires_at`.
+2. `users.email` has `CHECK (email = lower(email))`, so "stored lowercase" is guaranteed by the database.
+3. `run_events.sequence_number` has `CHECK (sequence_number >= 1)` (the design numbers events 1, 2, 3 ...).
+4. No indexes beyond the three the design suggests, plus the unique rules. The load tests show these are enough.
+5. B1-S02 (SQL text through repositories) runs through parameterised inserts into every text column now, because no repository
+   takes text yet. Each repository phase repeats it through its own functions (B3-S04 and onward).
+6. The B1-L03 queries are written the way the design describes the jobs. B5 and B10 measure the real repository functions again.
+
+### B2: Security helpers, mailer, rate limiter, login check (notes)
+
+Built:
+- `app/core/security.py`: bcrypt hashing and checking in their own threads; JWT create and verify (HS256 only;
+  claims `sub`, `iat`, `exp` = 24 hours; nothing else); email tokens (32 random bytes from `secrets`, stored as SHA-256);
+  a dummy hash so an unknown email costs the same time as a wrong password.
+- `app/core/auth.py`: `get_current_user`, the login check for protected routes (one `Bearer` header, valid JWT, user still
+  exists, JWT not issued before the last password change). Every failure is 401 `UNAUTHORIZED`.
+- `app/core/mailer.py`: console mailer (prints the email and its link in the terminal) and SMTP mailer, picked by
+  `MAILER_MODE`; `deliver()` never raises, logs a failure without the email body, and returns False.
+- `app/core/rate_limit.py`: in-memory sliding-window limiter with the default limits from the design (login 10 per 15 min,
+  register 5 per hour, forgot-password 3 per hour, resend 1 per minute, change-password 5 per 15 min). Over the limit:
+  429 `RATE_LIMITED` with "Try again in N seconds" and a `Retry-After` header. Old entries are swept away.
+- `app/validators/common.py`: the password rules (8+ characters, a letter and a digit, at most 72 bytes, checked first).
+- `app/core/clock.py`: the app clock, replaced by a fake clock in the expiry and rate-limit tests.
+
+Test results: `backend/tests/test_b2_security.py`, 29 tests, all pass. Numbers on this 4-core container:
+unknown email 275 ms vs wrong password 272 ms (B2-S01, ratio 1.01); slowest `/health` during 20 parallel hashes 12 ms (B2-C01);
+100 parallel hashes at cost 12 take about 6.9 s, so this machine does about **14 logins per second** (B2-L02);
+10,000 rate-limit keys use about 8 MB, about 0.4 MB after the sweep (B2-L01).
+
+Fixed during this phase: B2-C01 first failed (1,142 ms). bcrypt ran on Python's shared thread pool, so other thread work
+(the Docker check of `/health`) queued behind the hashes. bcrypt now has its own threads (one per CPU).
+
+Decisions made where the design docs were silent (please check):
+1. Gaps #1 is implemented as proposed: the JWT issue time is compared with `password_changed_at` rounded down to whole seconds.
+2. The login rate limit counts both the IP and the email; a request is refused if either is over the limit. A refused
+   attempt is not counted. (Wired into the routes in B3.)
+3. The console mailer prints to the terminal (stdout), not to the log, because the log must never hold tokens.
+4. SMTP settings (`SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_STARTTLS`, `MAIL_FROM`) were added for
+   `MAILER_MODE=smtp`; sending through a real SMTP server is a manual check for later (the provider is not chosen yet).
+5. A login password longer than 72 bytes is never a match, and it still costs one bcrypt check (so timing tells nothing).
+6. The 2 warnings in the test run come from the Docker SDK: it does not close its socket when the Docker socket is missing.
+   The socket is freed right away when the object goes, so nothing leaks.
 
 ---
 
