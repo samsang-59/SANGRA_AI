@@ -125,3 +125,62 @@ async def app(settings: Settings) -> AsyncIterator[FastAPI]:
 async def client(app: FastAPI) -> AsyncIterator[httpx.AsyncClient]:
     async with make_client(app) as c:
         yield c
+
+
+# --- Database fixtures (B1 onward) ------------------------------------------------------------------
+
+OUR_TABLES = [
+    "users", "user_tokens", "projects", "runs", "attempts",
+    "file_edits", "run_events", "test_results", "packages",
+]
+
+
+def database_url_for(name: str) -> str:
+    """The test URL with another database name (same server, same role)."""
+    base, _, _ = TEST_DATABASE_URL.rpartition("/")
+    return f"{base}/{name}"
+
+
+@pytest.fixture(scope="session")
+def migrated_database() -> str:
+    """The test database with a fresh schema and every migration applied (once per test session)."""
+    import psycopg
+
+    from app.migrate import run_migrations
+
+    with psycopg.connect(TEST_DATABASE_URL, autocommit=True) as conn:
+        conn.execute("DROP SCHEMA public CASCADE")
+        conn.execute("CREATE SCHEMA public")
+    run_migrations(TEST_DATABASE_URL)
+    return TEST_DATABASE_URL
+
+
+@pytest.fixture
+async def db(migrated_database: str):
+    """An autocommit connection to the migrated test database. Every table is emptied first."""
+    import psycopg
+    from psycopg.rows import dict_row
+
+    conn = await psycopg.AsyncConnection.connect(migrated_database, autocommit=True, row_factory=dict_row)
+    await conn.execute(f"TRUNCATE {', '.join(OUR_TABLES)} RESTART IDENTITY CASCADE")
+    try:
+        yield conn
+    finally:
+        await conn.close()
+
+
+@pytest.fixture
+def empty_database() -> Iterator[str]:
+    """A brand new, empty database for this test only (dropped afterwards). Returns its URL."""
+    import uuid
+
+    import psycopg
+
+    name = f"sangra_test_tmp_{uuid.uuid4().hex[:10]}"
+    with psycopg.connect(TEST_DATABASE_URL, autocommit=True) as conn:
+        conn.execute(f'CREATE DATABASE "{name}"')
+    try:
+        yield database_url_for(name)
+    finally:
+        with psycopg.connect(TEST_DATABASE_URL, autocommit=True) as conn:
+            conn.execute(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')

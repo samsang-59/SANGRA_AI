@@ -21,6 +21,9 @@ def create_pool(settings: Settings) -> AsyncConnectionPool:
         max_size=max(settings.db_pool_max_size, settings.db_pool_min_size),
         timeout=settings.db_pool_timeout_seconds,
         kwargs={"row_factory": dict_row},
+        # A connection is checked before it is handed out, so a connection broken while it sat idle
+        # (database restart, killed backend) is replaced instead of failing a request.
+        check=AsyncConnectionPool.check_connection,
         open=False,
         name="sangra",
     )

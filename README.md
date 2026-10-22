@@ -7,7 +7,7 @@ You describe a bug in plain English. SANGRA_AI searches your code, finds the wro
 it undoes the change and tries again (up to 3 times). Your original code is never touched.
 
 > **Status:** implementation in progress, phase by phase (see [the plan](06_implementation_plan.md) and
-> [Implementation progress](#implementation-progress) below). Current phase: **B0 Foundation** (awaiting review).
+> [Implementation progress](#implementation-progress) below). Current phase: **B1 Database and migrations** (awaiting review).
 
 ---
 
@@ -144,8 +144,9 @@ A phase is done only when all of its tests pass **and** all earlier tests still 
 
 | Phase | State | Tests |
 |---|---|---|
-| B0 Foundation | Built, awaiting review | 48 of 49 pass. B0-L01 (load target) fails, see below |
-| B1 to B11, FE0 to FE7 | Not started | |
+| B0 Foundation | Done (approved) | 49 of 49 pass |
+| B1 Database and migrations | Built, awaiting review | 93 of 93 pass (142 in total with B0) |
+| B2 to B11, FE0 to FE7 | Not started | |
 
 ### Running the backend
 
@@ -154,8 +155,9 @@ Needs Python 3.10+ (developed on 3.13) and PostgreSQL. Docker is optional until 
 ```bash
 cd backend
 python -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
-cp .env.example .env        # then put real values in .env (the app refuses the placeholder JWT secret)
-.venv/bin/python -m app     # serves http://127.0.0.1:8000/api/v1/health
+cp .env.example .env              # then put real values in .env (the app refuses the placeholder JWT secret)
+.venv/bin/python -m app.migrate   # creates or updates the tables (run by hand; the app never changes tables itself)
+.venv/bin/python -m app           # serves http://127.0.0.1:8000/api/v1/health
 ```
 
 ### Running the tests
@@ -176,14 +178,13 @@ middleware, plus the body size limit, 1 MB normally and 50 MB on the zip upload 
 skeleton (`app/core/db.py`); `GET /api/v1/health` through router, controller, service and repository; the startup and shutdown
 order (`app/main.py`).
 
-Test results: `backend/tests/test_b0_foundation.py`. All F, X, S and R tests pass (48 tests with the per-setting cases).
+Test results: `backend/tests/test_b0_foundation.py`. All 49 tests pass (the per-setting cases count separately).
 
-**B0-L01 fails and needs a decision.** Target: 500 parallel `/health` calls, p95 under 100 ms. Measured on a real server process
-(4-core container, one uvicorn process, a plain-socket client): all 500 answer 200, but p95 is about **140 to 160 ms** across runs.
-A bare FastAPI app with no middleware and no database gets about 60 to 100 ms on the same machine, so most of the time is the
-framework itself. One code fix is already in: parallel health calls share one database ping and one Docker ping, which took p95
-from about 1,200 ms to this level. Options: (a) change the target for a 500-request burst to p95 under 250 ms on one process and
-record why; (b) keep 100 ms and measure it at a set concurrency, for example 50 at a time; (c) keep it as a known failure.
+**B0-L01 target changed from 100 ms to 250 ms (decided after review).** Test: 500 `/health` calls at the same moment against a
+real server process (4-core container, one uvicorn process, a plain-socket client). All 500 answer 200; p95 is about 140 to 200 ms
+across runs. A bare FastAPI app with no middleware and no database gets about 60 to 100 ms on the same machine, so the 100 ms
+target was below what the framework itself can do in one process. One code fix went in first: health calls that arrive together
+share one database ping and one Docker ping (p95 went from about 1,200 ms to the level above).
 
 Decisions made where the design docs were silent (please check):
 1. Code lives in `backend/` (the frontend will go in `frontend/`). The layer folders follow 04_backend_design.md.
@@ -194,6 +195,32 @@ Decisions made where the design docs were silent (please check):
 5. The connection pool is created in B0 because health needs it. B1 adds the pool tests.
 6. Every response carries an `X-Request-ID` header with the id used in the logs.
 7. The JWT secret must be at least 32 characters and must not be the placeholder from `.env.example` (B0-X02, B2-S03).
+
+### B1: Database and migrations (notes)
+
+Built: `backend/migrations/001_initial_schema.sql` (the 9 tables of 03_database_design.md with their checks and the suggested
+indexes); the migration command `python -m app.migrate` (and `--status`), which keeps a `schema_migrations` table with a checksum
+per applied file; the connection pool now checks a connection before handing it out.
+
+Migration command rules: files are `NNN_name.sql`, numbered with no gaps or repeats; each file runs in one transaction (an error
+rolls back the whole file and it is not recorded); a changed or missing applied file is refused; an advisory lock stops two
+commands from running at the same moment; a database that cannot be reached gives a clear message and exit code 1.
+
+Test results: `backend/tests/test_b1_database.py`, 93 tests, all pass. Load numbers (10,000 runs for 100 users, 100,000 events):
+history page of one user 0.6 ms (uses `runs_user_created_idx`); events after N 0.5 ms; stuck waiting runs 0.6 ms; old workspaces
+4 ms; expired packages 0.7 ms; a later migration (add a column and an index) on that data 21 ms.
+
+Decisions made where the design docs were silent (please check):
+1. `NOT NULL` is added to every column that has a fixed list of values (a `CHECK ... IN` alone lets NULL through), except
+   `attempts.decision`, which the design marks as nullable. Also `NOT NULL` on `created_at`, `updated_at`, `runs.started_at`
+   (all default to now()), `run_events.message`, the numbering columns, the line numbers, `packages.size_bytes` and
+   `packages.expires_at`.
+2. `users.email` has `CHECK (email = lower(email))`, so "stored lowercase" is guaranteed by the database.
+3. `run_events.sequence_number` has `CHECK (sequence_number >= 1)` (the design numbers events 1, 2, 3 ...).
+4. No indexes beyond the three the design suggests, plus the unique rules. The load tests show these are enough.
+5. B1-S02 (SQL text through repositories) runs through parameterised inserts into every text column now, because no repository
+   takes text yet. Each repository phase repeats it through its own functions (B3-S04 and onward).
+6. The B1-L03 queries are written the way the design describes the jobs. B5 and B10 measure the real repository functions again.
 
 ---
 
