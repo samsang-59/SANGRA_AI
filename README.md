@@ -7,7 +7,7 @@ You describe a bug in plain English. SANGRA_AI searches your code, finds the wro
 it undoes the change and tries again (up to 3 times). Your original code is never touched.
 
 > **Status:** implementation in progress, phase by phase (see [the plan](06_implementation_plan.md) and
-> [Implementation progress](#implementation-progress) below). Current phase: **B5 Runs, events, live stream** (awaiting review).
+> [Implementation progress](#implementation-progress) below). Current phase: **B6 Workspace manager and code tools** (awaiting review).
 
 ---
 
@@ -149,8 +149,9 @@ A phase is done only when all of its tests pass **and** all earlier tests still 
 | B2 Security helpers, mailer, rate limiter, login check | Done (approved) | 29 of 29 pass |
 | B3 Auth feature (8 routes) | Done (approved) | 48 of 48 pass |
 | B4 Projects | Done (approved) | 46 of 46 pass |
-| B5 Runs, events, state rules, live stream (fake agent) | Built, awaiting review | 100 of 100 pass (365 in total with B0 to B4) |
-| B6 to B11, FE0 to FE7 | Not started | |
+| B5 Runs, events, state rules, live stream (fake agent) | Done (approved) | 100 of 100 pass |
+| B6 Workspace manager and the 3 read-only code tools | Built, awaiting review | 59 of 59 pass (424 in total with B0 to B5) |
+| B7 to B11, FE0 to FE7 | Not started | |
 
 ### Running the backend
 
@@ -395,6 +396,53 @@ Decisions made where the design docs were silent (please check):
    B5-C06 (delete and cancel): when the cancel ends the run first the delete may then succeed; nothing is half deleted.
 9. The `package` and `apply-to-source` routes (part of B5-S01's table) come in B10 and are added to that test there.
 10. B5-L09 runs for 20 seconds in the normal test run (`SANGRA_SOAK_SECONDS` makes it longer).
+
+### B6: Workspace manager and the 3 read-only code tools (notes)
+
+Built (no LLM yet; the agent uses these from B9):
+- `app/runners/workspace_manager.py`: builds `WORKSPACES_DIR/<user_id>/<run_id>/code/` (plus `artifacts/`) from a public
+  GitHub repo (shallow clone of the chosen or default branch, the commit is recorded), a local folder or an uploaded zip;
+  makes it a git repository (`git init` + a first commit of everything copied); the path guard `safe_path()`; undo
+  (`git reset --hard` + `git clean`, then checks the copy is clean, else `undo_failed`); the diff (the patch); delete;
+  and the age-based cleanup of old run folders.
+- `app/agent/tools/code_tools.py`: `search_files`, `search_in_file`, `read_file_lines`. Read-only, size-capped, they
+  answer `{ "error": ... }` for a bad request instead of failing.
+
+Safety (Gaps #5 and #6 are implemented):
+- git always runs without system or global config, without hooks or fsmonitor, HTTPS only, with no password prompt, and
+  with only the proxy and CA variables of the environment (never our secrets). Commands are argument lists, never shell text.
+- A local folder or zip never brings its own `.git` folder: the copy gets a fresh repository of ours, so a hostile
+  `.git/config` (fsmonitor, filters, sshCommand) or hook can never run. Tested with a zip and with a local folder.
+- Zips: entries with `..`, absolute or drive paths, symlink entries and password-protected entries are refused; the total
+  size and the number of files are limited, and the bytes are counted while unpacking (a zip that lies about its sizes
+  is refused).
+- Local copies never follow or copy symlinks, sockets or devices, and skip `target`, `build`, `node_modules`,
+  `__pycache__`, `.venv` and `.git`.
+- The path guard refuses `..` (also `%2e%2e`), absolute and drive paths, `\`, null bytes, very long paths, anything
+  inside `.git/`, and symlinks that lead out of `code/`.
+
+Test results: `tests/test_b6_workspace.py`, 59 tests, all pass (the clone tests use the tiny public repo
+`octocat/Hello-World`, so they need internet). Numbers: `search_files` over 50,000 files 0.7 to 0.9 s (B6-L01);
+200 lines of a 1 MB file in under 9 ms (B6-L02); 10 parallel copies of a 100 MB folder in 12 to 15 s using about 2 GB
+(copy + git objects), all of it freed again after delete (B6-L03).
+
+Decisions made where the design docs were silent (please check):
+1. Limits (all settings): the copy may be at most 500 MB and 50,000 files; a clone may take at most 5 minutes; leftover
+   run folders older than 24 hours are removed by the cleanup (wired to a job in B10).
+2. A local folder that is already a git repository is copied WITHOUT its `.git` folder and gets our own fresh repository
+   (the safest reading of Gaps #5; undo and the patch only need our first commit). `source_commit` is filled only for GitHub.
+3. Files ignored by `.gitignore` are still copied and recorded in our first commit (`git add --force`), so undo restores
+   them and tests that need them keep working.
+4. Search is case-insensitive for English letters (the bytes are lower-cased); non-English letters must match exactly.
+   Binary files are recognised by a zero byte in the first 8 KB. Lines in tool answers are cut at 300 characters.
+5. Every tool answer is capped at 16,000 characters (setting `TOOL_OUTPUT_MAX_CHARS`). 200 lines of typical code fit;
+   200 lines of 100 characters do not, and the answer is cut from the end with `truncated: true`. The final number is
+   checked against the model's context in B8 (B8-X08).
+6. **Open question:** a zip is unpacked exactly as it is. A zip downloaded from GitHub ("Download ZIP") has one top folder
+   (for example `repo-main/`), so the test command would run one level too high. Should a single top folder be removed
+   when unpacking? (Not done; the design does not say.)
+7. B6-X05 "not readable" and B6-X15 "locked file": the tests run as root, so "not readable" is simulated, and the locked
+   file uses `chattr +i` (Linux).
 
 ---
 

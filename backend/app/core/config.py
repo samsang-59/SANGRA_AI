@@ -68,6 +68,20 @@ class Settings(BaseSettings):
     max_failed_test_tries: int = Field(default=3, gt=0)
     max_hints: int = Field(default=3, gt=0)
 
+    # Workspaces (the temporary copy of the user's code): size and file-count limits for the copy (also for
+    # an unpacked zip), the clone time limit, and how old a leftover copy may get before cleanup removes it.
+    workspace_max_bytes: int = Field(default=500 * 1024 * 1024, gt=0)
+    workspace_max_files: int = Field(default=50_000, gt=0)
+    clone_timeout_seconds: float = Field(default=300.0, gt=0)
+    workspace_max_age_hours: float = Field(default=24.0, gt=0)
+
+    # The 3 read-only code tools (04_backend_design.md 6.6): search returns at most 20 files, a read returns at
+    # most 200 lines, files over 1 MB are not read, and every tool answer is capped in size.
+    search_max_files: int = Field(default=20, gt=0)
+    read_max_lines: int = Field(default=200, gt=0)
+    file_read_cap_bytes: int = Field(default=1024 * 1024, gt=0)
+    tool_output_max_chars: int = Field(default=16_000, gt=0)
+
     # Passwords: bcrypt cost (each +1 doubles the time; 12 is about 0.25 s per hash).
     bcrypt_rounds: int = Field(default=12, ge=4, le=16)
 
