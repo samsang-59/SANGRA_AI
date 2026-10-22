@@ -53,6 +53,9 @@ class Settings(BaseSettings):
     reset_token_minutes: int = Field(default=30, gt=0)
     resend_verification_min_seconds: int = Field(default=60, ge=0)
 
+    # Projects: at most this many per user.
+    project_limit: int = Field(default=20, gt=0)
+
     # Passwords: bcrypt cost (each +1 doubles the time; 12 is about 0.25 s per hash).
     bcrypt_rounds: int = Field(default=12, ge=4, le=16)
 

@@ -7,7 +7,7 @@ You describe a bug in plain English. SANGRA_AI searches your code, finds the wro
 it undoes the change and tries again (up to 3 times). Your original code is never touched.
 
 > **Status:** implementation in progress, phase by phase (see [the plan](06_implementation_plan.md) and
-> [Implementation progress](#implementation-progress) below). Current phase: **B3 Auth feature** (awaiting review).
+> [Implementation progress](#implementation-progress) below). Current phase: **B4 Projects** (awaiting review).
 
 ---
 
@@ -147,8 +147,9 @@ A phase is done only when all of its tests pass **and** all earlier tests still 
 | B0 Foundation | Done (approved) | 49 of 49 pass |
 | B1 Database and migrations | Done (approved) | 93 of 93 pass |
 | B2 Security helpers, mailer, rate limiter, login check | Done (approved) | 29 of 29 pass |
-| B3 Auth feature (8 routes) | Built, awaiting review | 48 of 48 pass (219 in total with B0 to B2) |
-| B4 to B11, FE0 to FE7 | Not started | |
+| B3 Auth feature (8 routes) | Done (approved) | 48 of 48 pass |
+| B4 Projects | Built, awaiting review | 45 of 46 pass. B4-L02 (load target) fails, see below |
+| B5 to B11, FE0 to FE7 | Not started | |
 
 ### Running the backend
 
@@ -298,6 +299,45 @@ Decisions made where the design docs were silent (please check):
 5. Extra unknown fields in a request body are ignored.
 6. Gaps #1 in practice: an old JWT made in the SAME second as a password change still works (whole-second comparison, as proposed).
    B3-X17 waits for the next second before changing the password.
+
+### B4: Projects (notes)
+
+Built: the 5 project routes through all layers (`routers/projects.py`, `validators/project.py` and `validators/project_rules.py`,
+`controllers/project_controller.py`, `services/project_service.py`, `repositories/project_repository.py`), plus
+`services/cleanup_service.py`, which runs AFTER the database commit of a delete (package files now, LangGraph data from B9).
+
+| Route | Answer |
+|---|---|
+| `POST /projects` | 201 the project; 400 `LOCAL_PATH_NOT_ALLOWED` / `PATH_NOT_FOUND`; 409 `PROJECT_LIMIT_REACHED` (20) |
+| `GET /projects` | 200 `{ items, total }`, newest first, only the user's own |
+| `GET /projects/{id}` | 200, or 404 `NOT_FOUND` (same answer for "not yours" and "does not exist") |
+| `PATCH /projects/{id}` | 200; only the fields sent change; 400 `INVALID_PROJECT_CONFIG` if the merged project is not valid |
+| `DELETE /projects/{id}` | 200 `{ id, deleted: true }`; 409 `PROJECT_HAS_ACTIVE_RUN`; its runs are deleted too |
+
+Test results: `backend/tests/test_b4_projects.py`, 45 of 46 pass. The list of 20 projects: p95 4.4 ms (B4-L01).
+
+**B4-L02 fails and needs a decision.** Target: 100 users with 20 projects each, 500 list calls at the same moment, p95 under
+300 ms. Measured on a real server process (4-core container, one process, plain-socket client): all 500 answer 200, p95 is
+about **740 to 940 ms**. The server handles about 450 list calls per second (each one checks the login, runs 3 queries and sends
+20 rows), so a burst of 500 needs about one second to get through. At a set concurrency the target holds: 10 at a time p95 24 ms,
+25 at a time 69 ms, 50 at a time 130 ms, 100 at a time 268 ms. One code fix went in: JSON responses no longer go through FastAPI's
+generic encoder. Options: (a) change the target for a burst of 500 to p95 under 1,500 ms on one process and record why;
+(b) keep 300 ms but measure it with 100 requests at a time (as above, 268 ms); (c) keep it as a known failure.
+
+Decisions made where the design docs were silent (please check):
+1. GitHub URLs must be exactly `https://github.com/<owner>/<repo>` (a `.git` ending is allowed; no trailing slash, no extra path,
+   no query, no user name). Local paths must be absolute (Linux or Windows style) and must not contain `..` or a null byte.
+2. Branch names: letters, digits, `.`, `_`, `/`, `-`; not starting with `-`, `/` or `.`; no `..` or `//`; not ending with `/`,
+   `.` or `.lock`; at most 255 characters. An empty branch means the repo's default branch.
+3. A zip project keeps no `source_reference` (one that is sent is ignored), also when a project is switched to zip.
+4. Names and test commands are trimmed before the length check.
+5. On PATCH, the local-folder checks (local mode, the folder exists) run only when `source_type` or `source_reference` change,
+   so renaming a project whose folder was moved still works. Sending `null` for name, language, source type or test command is 422.
+6. `GET /projects` returns all projects of the user (at most 20), so it has no page parameters.
+7. Package files are only ever deleted inside `PACKAGES_DIR`, whatever path the database holds.
+8. B4-C03 (delete and edit at the same moment): when the edit runs first both answer 200 and the project still ends up deleted;
+   when the delete runs first the edit gets 404. Never a 500.
+9. B4-X09 "not readable": the tests run as root, which can read everything, so the refusal of the operating system is simulated.
 
 ---
 

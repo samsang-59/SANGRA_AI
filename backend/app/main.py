@@ -24,7 +24,8 @@ from app.core.rate_limit import RateLimiter, auth_rules
 from app.core.security import DummyHash
 from app.core.singleflight import SingleFlight
 from app.repositories import health_repository
-from app.routers import auth, health
+from app.routers import auth, health, projects
+from app.services.cleanup_service import RunCleanup
 
 logger = logging.getLogger("app.main")
 
@@ -57,6 +58,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.settings = settings
     app.state.mailer = build_mailer(settings)
     app.state.background = BackgroundTasks()
+    app.state.run_cleanup = RunCleanup(settings.packages_dir)
     app.state.rate_limiter = RateLimiter()
     app.state.rate_rules = auth_rules(settings)
     app.state.dummy_hash = DummyHash(settings.bcrypt_rounds)
@@ -65,6 +67,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     install_error_handlers(app)
     app.include_router(health.router, prefix=API_PREFIX)
     app.include_router(auth.router, prefix=API_PREFIX)
+    app.include_router(projects.router, prefix=API_PREFIX)
 
     # Added inner to outer: body limit, then request id / error catcher, then CORS (outermost,
     # so even 413 and 500 answers carry the CORS headers).
