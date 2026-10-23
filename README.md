@@ -154,8 +154,29 @@ A phase is done only when all of its tests pass **and** all earlier tests still 
 | B7 Docker test runner | Done (approved) | 24 of 24 pass; B7-M01 is manual (Windows), not done yet |
 | B8 LLM client and prompts | Done (approved) | 29 of 29 pass; B8-M01 and B8-Q01 (real Groq) not run yet |
 | B9 The LangGraph agent (11 steps, pause and resume, limits) | Done (approved) | 62 of 62 pass (541 in total with B0 to B8); B9-E01 (real Groq) not run yet |
-| B10 Finish, package, download, apply to my folder, cleanup | Built, awaiting review | 36 of 36 pass (577 in total with B0 to B9) |
+| B10 Finish, package, download, apply to my folder, cleanup | Built; decisions agreed, waiting for the go-ahead for B11 | 36 of 36 pass (577 in total with B0 to B9) |
 | B11, FE0 to FE7 | Not started | |
+
+### Open items (manual checks still to do)
+
+These checks cannot be run from the cloud container where the backend is built. None of them blocks the next phase.
+
+| ID | What it is, in simple words | Why it is still open | What is needed |
+|---|---|---|---|
+| B7-M01 | On a Windows laptop with Docker Desktop, run the tests of a project stored in the OneDrive Desktop folder. | The build machine is Linux, so Windows cannot be tried there. Docker Desktop on Windows sometimes cannot share folders inside OneDrive. | On your laptop: create a "local folder" project pointing to a folder on the OneDrive Desktop, start a run, check that the tests run. |
+| B8-M01 | Three real calls to the AI model (Groq) on the discount example (5% instead of 10%): find the bug, propose a fix, read the answer. Record the time and the tokens used. | Every test so far uses a fake AI with scripted answers. The cloud container's network blocks `api.groq.com` and has no Groq key. | Option (a) or (b) below. |
+| B8-Q01 | Quality check of the AI: 10 small projects with one planted bug each (5 Java, 5 Python). Record whether the AI finds the right file and line and gives a valid, correct fix. Not an all-pass test (the AI is not deterministic). Bar: at least 5 of 10 valid fixes, otherwise change the model or the prompts first. | Same as B8-M01. | Option (a) or (b) below. |
+| B9-E01 | One complete run with everything real: real Groq, real Docker, the discount example. You approve the fix, the tests pass, the run succeeds. Time and tokens recorded. | Same as B8-M01. Every other part of this flow is already tested with fakes. | Option (a) or (b) below. |
+
+Two ways to unblock B8-M01, B8-Q01 and B9-E01:
+- (a) In the cloud: in the claude.ai environment settings, allow `api.groq.com` in the network settings and add the
+  Groq key as a secret named `GROQ_API_KEY`. Then the checks can be run there.
+- (b) On your own machine, once the backend is finished: put `GROQ_API_KEY` in `backend/.env`, start the backend and
+  Docker Desktop, and run the checks by hand (step-by-step instructions to be added).
+
+Also open: phases B8, B9 and B10 are on the branch `claude/optimistic-rubin-i5mzzg` but not yet merged into `main`.
+To see them after cloning, check out that branch (`git checkout claude/optimistic-rubin-i5mzzg`) or merge it into
+`main` on GitHub.
 
 ### Running the backend
 
@@ -642,7 +663,7 @@ Fixed during this phase (found by the tests):
    also built in a small pool of their own (2 threads), so many runs finishing at once wait their turn instead of
    filling the shared thread pool.
 
-Decisions made where the design docs were silent (please check):
+Decisions made where the design docs were silent (agreed by the owner):
 1. Package files are stored at `PACKAGES_DIR/<user_id>/run_<run_id>.zip`; the download name is `sangra-run-<id>.zip`.
 2. A normal finish builds the package before the final status is saved (as 6.4 step 11 lists it); a cancel saves the
    final status first (as `cancel_run` lists it).
