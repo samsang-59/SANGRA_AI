@@ -150,7 +150,7 @@ A phase is done only when all of its tests pass **and** all earlier tests still 
 | B3 Auth feature (8 routes) | Done (approved) | 48 of 48 pass |
 | B4 Projects | Done (approved) | 46 of 46 pass |
 | B5 Runs, events, state rules, live stream (fake agent) | Done (approved) | 100 of 100 pass |
-| B6 Workspace manager and the 3 read-only code tools | Built, awaiting review | 59 of 59 pass (424 in total with B0 to B5) |
+| B6 Workspace manager and the 3 read-only code tools | Done (approved) | 61 of 61 pass |
 | B7 to B11, FE0 to FE7 | Not started | |
 
 ### Running the backend
@@ -421,7 +421,7 @@ Safety (Gaps #5 and #6 are implemented):
 - The path guard refuses `..` (also `%2e%2e`), absolute and drive paths, `\`, null bytes, very long paths, anything
   inside `.git/`, and symlinks that lead out of `code/`.
 
-Test results: `tests/test_b6_workspace.py`, 59 tests, all pass (the clone tests use the tiny public repo
+Test results: `tests/test_b6_workspace.py`, 61 tests, all pass (the clone tests use the tiny public repo
 `octocat/Hello-World`, so they need internet). Numbers: `search_files` over 50,000 files 0.7 to 0.9 s (B6-L01);
 200 lines of a 1 MB file in under 9 ms (B6-L02); 10 parallel copies of a 100 MB folder in 12 to 15 s using about 2 GB
 (copy + git objects), all of it freed again after delete (B6-L03).
@@ -438,9 +438,9 @@ Decisions made where the design docs were silent (please check):
 5. Every tool answer is capped at 16,000 characters (setting `TOOL_OUTPUT_MAX_CHARS`). 200 lines of typical code fit;
    200 lines of 100 characters do not, and the answer is cut from the end with `truncated: true`. The final number is
    checked against the model's context in B8 (B8-X08).
-6. **Open question:** a zip is unpacked exactly as it is. A zip downloaded from GitHub ("Download ZIP") has one top folder
-   (for example `repo-main/`), so the test command would run one level too high. Should a single top folder be removed
-   when unpacking? (Not done; the design does not say.)
+6. Decided after review: when EVERY file of a zip sits inside one single top folder (as in GitHub's "Download ZIP",
+   for example `repo-main/`), that folder is removed while unpacking, so the test command runs in the project root.
+   A zip with files at the top, or with several top folders, is unpacked as it is.
 7. B6-X05 "not readable" and B6-X15 "locked file": the tests run as root, so "not readable" is simulated, and the locked
    file uses `chattr +i` (Linux).
 
