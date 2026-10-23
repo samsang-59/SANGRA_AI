@@ -28,6 +28,8 @@ from app.core.security import DummyHash
 from app.core.singleflight import SingleFlight
 from app.repositories import health_repository
 from app.routers import auth, health, projects, runs
+from app.runners.test_runner import TestRunner
+from app.runners.workspace_manager import WorkspaceManager
 from app.services.cleanup_service import RunCleanup
 from app.services.jobs import JobScheduler
 from app.services.run_progress import RunProgress
@@ -57,6 +59,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     try:
         if not await app.state.docker_check():
             logger.warning("Docker is not reachable: test runs will fail until it is started")
+        else:
+            await app.state.test_runner.remove_leftovers()  # containers left over after a crash (Gaps #7)
         await jobs.try_recovery()  # if the database is down now, the jobs try again in the background
         jobs.start()
         logger.info("SANGRA_AI started (mode=%s)", settings.app_mode)
@@ -76,6 +80,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.mailer = build_mailer(settings)
     app.state.background = BackgroundTasks()
     app.state.run_cleanup = RunCleanup(settings.packages_dir)
+    app.state.workspace_manager = WorkspaceManager(settings)
+    app.state.test_runner = TestRunner(settings)
     app.state.rate_limiter = RateLimiter()
     app.state.rate_rules = auth_rules(settings)
     app.state.dummy_hash = DummyHash(settings.bcrypt_rounds)

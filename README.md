@@ -7,7 +7,7 @@ You describe a bug in plain English. SANGRA_AI searches your code, finds the wro
 it undoes the change and tries again (up to 3 times). Your original code is never touched.
 
 > **Status:** implementation in progress, phase by phase (see [the plan](06_implementation_plan.md) and
-> [Implementation progress](#implementation-progress) below). Current phase: **B6 Workspace manager and code tools** (awaiting review).
+> [Implementation progress](#implementation-progress) below). Current phase: **B7 Docker test runner** (awaiting review).
 
 ---
 
@@ -151,7 +151,8 @@ A phase is done only when all of its tests pass **and** all earlier tests still 
 | B4 Projects | Done (approved) | 46 of 46 pass |
 | B5 Runs, events, state rules, live stream (fake agent) | Done (approved) | 100 of 100 pass |
 | B6 Workspace manager and the 3 read-only code tools | Done (approved) | 61 of 61 pass |
-| B7 to B11, FE0 to FE7 | Not started | |
+| B7 Docker test runner | Built, awaiting review | 24 of 24 pass (450 in total with B0 to B6); B7-M01 is manual (Windows) |
+| B8 to B11, FE0 to FE7 | Not started | |
 
 ### Running the backend
 
@@ -443,6 +444,50 @@ Decisions made where the design docs were silent (please check):
    A zip with files at the top, or with several top folders, is unpacked as it is.
 7. B6-X05 "not readable" and B6-X15 "locked file": the tests run as root, so "not readable" is simulated, and the locked
    file uses `chattr +i` (Linux).
+
+### B7: Docker test runner (notes)
+
+Built: `app/runners/test_runner.py`. One container per test run, with only the run's `code/` folder mounted (at
+`/workspace`) plus a dependency cache volume (at `/cache`), labelled with the run id. The test command runs with
+`sh -c` inside the container. Limits: 10 minutes, 2 CPUs, 2 GB memory, 512 processes, 1 MB of output. No Linux
+capabilities, `no-new-privileges`, and never root. Nothing from the backend's environment is passed in. At most 2 test
+containers run at the same moment (Gaps #8; more wait their turn). At startup, containers left over after a crash are
+removed (Gaps #7). The full log is saved to `artifacts/`; the last 8,000 characters are kept as the excerpt.
+
+| What happened | Result |
+|---|---|
+| exit code 0 | `passed` |
+| any other exit code (failing tests, compile error) | `failed` |
+| exit code 126 or 127 (the test command was not found or cannot run) | `error` |
+| killed for using too much memory, or for printing more than 1 MB | `failed`, with a note |
+| over the time limit | `timed_out` (the container is killed and removed) |
+| Docker not running, image missing and not pullable, Docker failing during the run | `error`, with a clear note |
+
+Test results: `tests/test_b7_test_runner.py`, 24 tests against the real Docker engine, all pass. Numbers on this machine:
+a Maven project with JUnit 5 takes 11.5 to 12 s with an empty dependency cache and 3.9 to 4 s with a warm one (B7-L02);
+10 pytest runs with at most 3 at once took 12 s (B7-L01); when Docker was stopped in the middle of a test the runner
+answered `error` after 12.6 s and nothing hung (B7-R02); 1 GB of output was cut at 1 MB while the backend held only a few
+MB (B7-X06). B7-M01 (Docker Desktop on Windows with a OneDrive folder) needs a real Windows machine: still to be done by hand.
+
+Fixed during this phase: B7-R02 found that when Docker disappears in the middle of a test, removing the container could
+raise an error and the runner crashed instead of answering `error`. Cleaning up can no longer raise.
+Note: one full run had a single B7-C02 failure that did not come back in 4 further full runs (it came right after a run
+in which Docker had been restarted and 11 crash leftovers were present). The test now prints every outcome if it fails.
+
+Decisions made where the design docs were silent (please check):
+1. Images: `maven:3.9-eclipse-temurin-17` for Java and `python:3.12-slim` for Python (settings). The Python image has no
+   pytest, so a Python project's test command installs what it needs, for example
+   `pip install -q -r requirements.txt && python -m pytest -q` (pip installs into the cache volume as the container user).
+2. Dependency cache: a Docker volume mounted as the container's home (`/cache`): one per language in local mode, one per
+   user and language in deployed mode (so one user's build cannot poison another's, design 6.7). The first use gives the
+   new volume to the container user.
+3. Container user (Gaps #9): the backend's own user id, so the files the tests create stay removable by the backend; when
+   the backend runs as root, user 1000 is used and the run's copy is opened for writing. Root is never used. No exceptions
+   were needed for Maven or pip.
+4. Using too much memory or printing more than 1 MB counts as `failed` (the code under test did it), with a note.
+5. Internet is allowed inside test containers (MVP, as designed).
+6. In the cloud sandbox where this is developed, the network inspects TLS, so the TEST SUITE hands the sandbox's
+   certificate to the test containers (`sandbox_network_extras()` in `tests/conftest.py`). The app does not do this.
 
 ---
 

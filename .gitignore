@@ -3,3 +3,4 @@ prompt.md
 __pycache__/
 .venv/
 node_modules/
+backend/tests/.dockerd_restart.log
