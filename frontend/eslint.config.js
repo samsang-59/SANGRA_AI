@@ -23,4 +23,6 @@ export default [
   },
   // Playwright fixtures need the "({}, testInfo)" form.
   { files: ["tests/e2e/**/*.js"], rules: { "no-empty-pattern": "off" } },
+  // Test helper modules export components and functions together; fast refresh does not apply to them.
+  { files: ["tests/**/*.{js,jsx}"], rules: { "react-refresh/only-export-components": "off" } },
 ];

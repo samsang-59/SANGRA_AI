@@ -7,7 +7,7 @@ You describe a bug in plain English. SANGRA_AI searches your code, finds the wro
 it undoes the change and tries again (up to 3 times). Your original code is never touched.
 
 > **Status:** implementation in progress, phase by phase (see [the plan](06_implementation_plan.md) and
-> [Implementation progress](#implementation-progress) below). Current phase: **FE1 Frontend API layer** (awaiting review). The backend (B0 to B11) is complete.
+> [Implementation progress](#implementation-progress) below). Current phase: **FE2 Auth state, route guards and auth pages** (awaiting review). The backend (B0 to B11) is complete.
 
 ---
 
@@ -157,8 +157,9 @@ A phase is done only when all of its tests pass **and** all earlier tests still 
 | B10 Finish, package, download, apply to my folder, cleanup | Done (approved) | 36 of 36 pass (577 in total with B0 to B9) |
 | B11 End to end, security sweep, soak and chaos tests | Done (approved) | 30 of 30 pass (607 in total with B0 to B10); B11-E01 to E07 with the real Groq not run yet |
 | FE0 Frontend project setup (Vite, React, router, QueryClient, env, design tokens) | Done (approved) | 22 unit + 6 browser tests pass (Chromium); lint and build scan clean; backend 607 of 607 still pass. FE0-B01 in Firefox not run yet |
-| FE1 API layer (client, 22 route functions, live stream helper) | Built, awaiting review | 161 unit + 2 real-backend contract tests pass; FE0 tests still pass; backend 607 of 607 pass |
-| FE2 to FE7 | Not started | |
+| FE1 API layer (client, 22 route functions, live stream helper) | Done (approved) | 161 unit + 2 real-backend contract tests pass; FE0 tests still pass; backend 607 of 607 pass |
+| FE2 Auth state, guards and auth pages (register, login, verify, forgot, reset, account) | Built, awaiting review | 234 unit + 11 browser + 2 contract tests pass; backend 607 of 607 pass |
+| FE3 to FE7 | Not started | |
 
 ### Open items (manual checks still to do)
 
@@ -968,6 +969,78 @@ Decisions made where the design docs were silent (please check):
    `sangra-run-<id>.zip`.
 6. The API tests run in Vitest's Node environment, whose `fetch`, `FormData` and streams behave like a browser's
    (jsdom's FormData does not work with Node's fetch). The React test runs in jsdom.
+
+### FE2: Auth state, route guards and auth pages (notes)
+
+Built (05_frontend_design.md F1, F3, F5; the screens login, register, verify-email (3 states), forgot-password
+(2 states), reset-password, account and the layout):
+- `src/auth/AuthProvider.jsx` and `useAuth.js`: the login state. It holds the token (via `api/token.js`), the user
+  and a status: loading, loggedIn, loggedOut, or unreachable (the backend could not be reached at start). It offers
+  login, register (logged in at once), logout (the backend is not called), refreshUser and retry. It also registers
+  the 401 function, which shows "Session ended, please log in again" on the login page.
+- When the app opens:
+  - no token: logged out, with no request;
+  - a token that is not JWT-shaped: removed;
+  - otherwise a spinner while `getMe` runs (no flash of the login page): a 401 removes the token quietly, and a
+    network error keeps it and shows "Cannot reach the server" with a retry button.
+- `src/auth/guards.jsx`:
+  - `ProtectedRoute`: a logged-out user goes to `/login?returnTo=<page>`, and back there after login; after an
+    explicit logout, plain `/login`.
+  - `PublicOnlyRoute`: a logged-in user goes to the `returnTo` page if it is inside the app, else `/projects`.
+  - `AnyAuthRoute`: used by `/verify-email`.
+- Pages: Login, Register, VerifyEmail, ForgotPassword, ResetPassword, Account. Each form checks the backend's rules
+  before sending (`src/validation.js`: name 1-100, email shape, password 8+ characters with a letter and a digit and
+  at most 72 bytes, confirm field). It focuses the first wrong field, links each error to its field, and keeps its
+  button disabled while sending (one request). Name and email are trimmed. Backend messages are shown as text
+  (`src/errors.js`).
+  - **Verify:** calls the backend exactly once (also in React's development mode), removes the token from the
+    address bar, then shows success, or "This link is invalid or expired".
+  - **Reset:** has a confirm field; success goes to the login page; a bad or missing link shows the error with a
+    "get a new link" link.
+  - **Account:** shows the email, verified or not, resend (only when not verified), change password (success logs
+    out with "Password changed, please log in again"; a wrong old password stays on the page) and log out.
+- `src/components/Layout.jsx`: the top bar (brand, projects, history, account) and the verify banner with a resend
+  button on every logged-in page. The "run in progress" banner comes in FE7, once runs exist (FE4).
+- Shared pieces: `Form.jsx` (Field, PasswordField with show/hide, SubmitButton), `Status.jsx` (Spinner, Notice,
+  full-page states), `AuthLayout.jsx`, the styles in `src/styles/components.css`. Screenshots were compared with
+  the designs and match.
+
+Test results:
+- Unit tests: 234 of 234 pass (74 new FE2 tests; the FE0 route tests now go through the guards).
+  - `tests/unit/fe2_auth_state.test.jsx` (27): F01-F07, X01-X07, S01, S02, L01 (50 app openings with a valid
+    token leave no handler behind and the heap does not grow).
+  - `tests/unit/fe2_pages.test.jsx` (47): F10-F17, X10-X17, S10-S12, U02.
+- Browser tests (Playwright, Chromium, dev server and built app): 11 pass (1 is skipped by design: the built-files
+  check does not run on the dev server). New:
+  - FE2-U01: register, log out and log in using only the keyboard; the focus order is name, email, password,
+    show, and on login email, "Forgot password?", password.
+  - Login with a wrong password.
+  - FE0-F03 on the built app: requests go to the address from the env file.
+- FE0-F03 is also checked in the built files: a build with `VITE_API_URL=http://api.example.test:9999/api/v1`
+  contains that address, and `npm run check:build` now always checks the address (from the environment, `.env`,
+  or the default).
+- Contract tests against the real backend: 2 of 2 still pass. Lint: no problems. Backend: 607 of 607 pass.
+
+Fixed during this phase (found by the tests):
+1. FE2-X06: when another tab had logged out, this tab's next request went without a token, and the 401 rule ignored
+   that answer, so the tab stayed "logged in". The rule now also applies to a request sent without a token; the auth
+   state ignores a second call.
+2. FE2-U01: after "log out" on the account page, logging in again went back to the account page instead of
+   /projects. Logout now goes to plain /login, as F3 says; only a session that ended by itself remembers the page.
+3. Looks (compared with the screens): the "log out" card is one row, the banner's resend button is cyan, the
+   account page's password hint is in the mono font.
+
+Decisions made where the design docs were silent (please check):
+1. The reset page has a "Confirm new password" field, as the plan (FE2-F15) asks, although its screen shows one
+   field.
+2. The verify page when logged out and the link is bad: "Log in, then send a new link from your account page." with
+   a "log in" button (the screen shows the logged-in version with "go to account").
+3. After a reset the login page says "Password changed, please log in"; after a change on the account page, "Password
+   changed, please log in again" (F1).
+4. `returnTo` is kept only for a path inside the app (starting with one `/`, no `//`, `://`, backslash or control
+   characters).
+5. A saved token that is not shaped like a JWT (three dot-separated parts) is removed without asking the backend.
+6. Password fields have a "show/hide" text button inside the field (FE2-S12); the screens do not show one.
 
 ---
 

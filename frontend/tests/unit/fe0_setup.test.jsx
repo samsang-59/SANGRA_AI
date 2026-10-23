@@ -1,11 +1,13 @@
 // Phase FE0: project setup.
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { QueryClientProvider } from "@tanstack/react-query";
 import App from "../../src/App.jsx";
 import { DEFAULT_API_URL, apiUrlFrom } from "../../src/config.js";
 import { createQueryClient } from "../../src/queryClient.js";
+import { clearToken } from "../../src/api/token.js";
+import { GOOD_TOKEN, fakeBackend, renderApp, saveToken } from "./app_helpers.jsx";
 
 function renderAt(path) {
   return render(
@@ -43,21 +45,37 @@ describe("FE0-X02: unknown URLs", () => {
   });
 });
 
-describe("FE0-F01: the route table of F1", () => {
-  it("/ goes to the projects page", () => {
-    renderAt("/");
-    expect(screen.getByRole("heading", { name: "Projects" })).toBeInTheDocument();
+describe("FE0-F01: the route table of F1 (with the FE2 guards)", () => {
+  const { server } = fakeBackend();
+  beforeAll(() => server.listen({ onUnhandledRequest: "error" }));
+  afterAll(() => server.close());
+  beforeEach(() => {
+    window.localStorage.clear();
+    clearToken();
+  });
+
+  it("/ goes to the projects page (logged in)", async () => {
+    saveToken(GOOD_TOKEN);
+    renderApp("/");
+    expect(await screen.findByRole("heading", { name: "Projects" })).toBeInTheDocument();
   });
 
   it.each([
-    ["/login", "Log in"], ["/register", "Create your account"], ["/verify-email?token=x", "Verify email"],
-    ["/forgot-password", "Forgot password"], ["/reset-password?token=x", "Set a new password"],
+    ["/login", "log in"], ["/register", "create account"], ["/forgot-password", "send reset link"],
+    ["/reset-password?token=x", "save new password"],
+  ])("%s has its page (logged out)", async (path, button) => {
+    renderApp(path);
+    expect(await screen.findByRole("button", { name: button })).toBeInTheDocument();
+    expect(screen.queryByText("Page not found")).not.toBeInTheDocument();
+  });
+
+  it.each([
     ["/account", "Account"], ["/projects", "Projects"], ["/projects/new", "New project"],
-    ["/projects/3/edit", "Edit project"], ["/projects/3/run", "Start a run"], ["/runs", "History"],
-    ["/runs/42", "Run"],
-  ])("%s has its page", (path, title) => {
-    renderAt(path);
-    expect(screen.getByRole("heading", { name: title })).toBeInTheDocument();
+    ["/projects/3/edit", "Edit project"], ["/projects/3/run", "Start a run"], ["/runs", "History"], ["/runs/42", "Run"],
+  ])("%s has its page (logged in)", async (path, title) => {
+    saveToken(GOOD_TOKEN);
+    renderApp(path);
+    expect(await screen.findByRole("heading", { name: title })).toBeInTheDocument();
     expect(screen.queryByText("Page not found")).not.toBeInTheDocument();
   });
 });

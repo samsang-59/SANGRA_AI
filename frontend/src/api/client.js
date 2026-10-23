@@ -22,11 +22,12 @@ export function setUnauthorizedHandler(handler) {
   unauthorizedHandler = handler;
 }
 
-/** Called after a protected request answered 401. `sentToken` is the token that request carried: when several
+/** Called after a protected request answered 401. `sentToken` is the token that request carried. When several
  * requests fail at the same moment, only the first one (whose token is still the saved one) clears it and calls the
- * handler (FE1-X04). */
+ * handler (FE1-X04). A request sent with no token at all (another tab logged out, FE2-X06) also calls the handler;
+ * the auth state ignores the call when it is already logged out. */
 export function handleUnauthorized(sentToken) {
-  if (sentToken === null || getToken() !== sentToken) return;
+  if (sentToken !== null && getToken() !== sentToken) return;
   clearToken();
   if (unauthorizedHandler) unauthorizedHandler();
 }

@@ -1,5 +1,6 @@
 // FE0-S01 and FE0-F03 on the built files (dist/): no secret is ever in the bundle, and the API address in the bundle
-// is the one from the env file. Usage: npm run build && node scripts/check-build.mjs [expected-api-url]
+// is the one from the env file (FE0-F03). Usage: npm run build && node scripts/check-build.mjs [expected-api-url]
+// (default: VITE_API_URL from the environment or .env, else the documented default).
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 
@@ -31,7 +32,17 @@ for (const path of all) {
     if (pattern.test(content)) problems.push(`${path.replace(DIST, "dist/")}: matches ${pattern}`);
   }
 }
-const expected = process.argv[2];
+function envFileValue() {
+  try {
+    const line = readFileSync(new URL("../.env", import.meta.url), "utf8").split("\n")
+      .find((l) => l.trim().startsWith("VITE_API_URL="));
+    return line ? line.split("=", 2)[1].trim() : "";
+  } catch {
+    return "";
+  }
+}
+const expected = (process.argv[2] || process.env.VITE_API_URL || envFileValue() || "http://localhost:8000/api/v1")
+  .replace(/\/+$/, "");
 if (expected && !text.includes(expected)) problems.push(`the API address ${expected} is not in the bundle`);
 
 if (problems.length) {

@@ -1,24 +1,40 @@
 import { Navigate, Route, Routes } from "react-router-dom";
+import { AnyAuthRoute, ProtectedRoute, PublicOnlyRoute } from "./auth/guards.jsx";
+import Layout from "./components/Layout.jsx";
+import AccountPage from "./pages/AccountPage.jsx";
+import ForgotPasswordPage from "./pages/ForgotPasswordPage.jsx";
+import LoginPage from "./pages/LoginPage.jsx";
 import NotFoundPage from "./pages/NotFoundPage.jsx";
 import PlannedPage from "./pages/PlannedPage.jsx";
+import RegisterPage from "./pages/RegisterPage.jsx";
+import ResetPasswordPage from "./pages/ResetPasswordPage.jsx";
+import VerifyEmailPage from "./pages/VerifyEmailPage.jsx";
 
-// The route table of 05_frontend_design.md F1. Pages not built yet show which phase builds them.
+// The route table of 05_frontend_design.md F1, with the guards of F3. Pages not built yet show which phase builds them.
 export default function App() {
   return (
     <Routes>
       <Route path="/" element={<Navigate to="/projects" replace />} />
-      <Route path="/login" element={<PlannedPage title="Log in" phase="FE2" />} />
-      <Route path="/register" element={<PlannedPage title="Create your account" phase="FE2" />} />
-      <Route path="/verify-email" element={<PlannedPage title="Verify email" phase="FE2" />} />
-      <Route path="/forgot-password" element={<PlannedPage title="Forgot password" phase="FE2" />} />
-      <Route path="/reset-password" element={<PlannedPage title="Set a new password" phase="FE2" />} />
-      <Route path="/account" element={<PlannedPage title="Account" phase="FE2" />} />
-      <Route path="/projects" element={<PlannedPage title="Projects" phase="FE3" />} />
-      <Route path="/projects/new" element={<PlannedPage title="New project" phase="FE3" />} />
-      <Route path="/projects/:projectId/edit" element={<PlannedPage title="Edit project" phase="FE3" />} />
-      <Route path="/projects/:projectId/run" element={<PlannedPage title="Start a run" phase="FE4" />} />
-      <Route path="/runs" element={<PlannedPage title="History" phase="FE4" />} />
-      <Route path="/runs/:runId" element={<PlannedPage title="Run" phase="FE5" />} />
+      <Route element={<PublicOnlyRoute />}>
+        <Route path="/login" element={<LoginPage />} />
+        <Route path="/register" element={<RegisterPage />} />
+        <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+        <Route path="/reset-password" element={<ResetPasswordPage />} />
+      </Route>
+      <Route element={<AnyAuthRoute />}>
+        <Route path="/verify-email" element={<VerifyEmailPage />} />
+      </Route>
+      <Route element={<ProtectedRoute />}>
+        <Route element={<Layout />}>
+          <Route path="/account" element={<AccountPage />} />
+          <Route path="/projects" element={<PlannedPage title="Projects" phase="FE3" />} />
+          <Route path="/projects/new" element={<PlannedPage title="New project" phase="FE3" />} />
+          <Route path="/projects/:projectId/edit" element={<PlannedPage title="Edit project" phase="FE3" />} />
+          <Route path="/projects/:projectId/run" element={<PlannedPage title="Start a run" phase="FE4" />} />
+          <Route path="/runs" element={<PlannedPage title="History" phase="FE4" />} />
+          <Route path="/runs/:runId" element={<PlannedPage title="Run" phase="FE5" />} />
+        </Route>
+      </Route>
       <Route path="*" element={<NotFoundPage />} />
     </Routes>
   );

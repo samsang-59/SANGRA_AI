@@ -11,10 +11,10 @@ test.afterEach(async ({}, testInfo) => {
   expect(testInfo.consoleErrors).toEqual([]);
 });
 
-test("the app opens and shows the first page", async ({ page }) => {
+test("the app opens and shows the first page (logged out: the login page)", async ({ page }) => {
   await page.goto("/");
-  await expect(page).toHaveURL(/\/projects$/);
-  await expect(page.getByRole("heading", { name: "Projects" })).toBeVisible();
+  await expect(page).toHaveURL(/\/login\?returnTo=%2Fprojects$/);
+  await expect(page.getByText("Log in to your account")).toBeVisible();
   await expect(page).toHaveTitle("SANGRA_AI");
 });
 
@@ -22,7 +22,7 @@ test("an unknown URL shows the page-not-found page", async ({ page }) => {
   await page.goto("/this-page");
   await expect(page.getByRole("heading", { name: "Page not found" })).toBeVisible();
   await page.getByRole("link", { name: "go to projects" }).click();
-  await expect(page).toHaveURL(/\/projects$/);
+  await expect(page).toHaveURL(/\/login\?returnTo=%2Fprojects$/); // logged out, so login comes first
 });
 
 test("the design fonts and colours are loaded", async ({ page }) => {
