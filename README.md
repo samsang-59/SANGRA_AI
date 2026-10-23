@@ -7,7 +7,7 @@ You describe a bug in plain English. SANGRA_AI searches your code, finds the wro
 it undoes the change and tries again (up to 3 times). Your original code is never touched.
 
 > **Status:** implementation in progress, phase by phase (see [the plan](06_implementation_plan.md) and
-> [Implementation progress](#implementation-progress) below). Current phase: **FE0 Frontend project setup** (awaiting review). The backend (B0 to B11) is complete.
+> [Implementation progress](#implementation-progress) below). Current phase: **FE1 Frontend API layer** (awaiting review). The backend (B0 to B11) is complete.
 
 ---
 
@@ -156,8 +156,9 @@ A phase is done only when all of its tests pass **and** all earlier tests still 
 | B9 The LangGraph agent (11 steps, pause and resume, limits) | Done (approved) | 62 of 62 pass (541 in total with B0 to B8); B9-E01 (real Groq) not run yet |
 | B10 Finish, package, download, apply to my folder, cleanup | Done (approved) | 36 of 36 pass (577 in total with B0 to B9) |
 | B11 End to end, security sweep, soak and chaos tests | Done (approved) | 30 of 30 pass (607 in total with B0 to B10); B11-E01 to E07 with the real Groq not run yet |
-| FE0 Frontend project setup (Vite, React, router, QueryClient, env, design tokens) | Built, awaiting review | 22 unit + 6 browser tests pass (Chromium); lint and build scan clean; backend 607 of 607 still pass. FE0-B01 in Firefox not run yet |
-| FE1 to FE7 | Not started | |
+| FE0 Frontend project setup (Vite, React, router, QueryClient, env, design tokens) | Done (approved) | 22 unit + 6 browser tests pass (Chromium); lint and build scan clean; backend 607 of 607 still pass. FE0-B01 in Firefox not run yet |
+| FE1 API layer (client, 22 route functions, live stream helper) | Built, awaiting review | 161 unit + 2 real-backend contract tests pass; FE0 tests still pass; backend 607 of 607 pass |
+| FE2 to FE7 | Not started | |
 
 ### Open items (manual checks still to do)
 
@@ -224,7 +225,10 @@ npm run dev                       # serves http://localhost:5173
 
 Frontend checks: `npm run lint`, `npm test` (unit tests, Vitest), `npm run build && npm run check:build` (the production
 build, then a scan of it for secrets), `npm run test:e2e` (browser tests with Playwright; it starts `npm run dev` and
-`npm run preview` itself, so run `npm run build` first; `E2E_FIREFOX=1` adds Firefox where it is installed).
+`npm run preview` itself, so run `npm run build` first; `E2E_FIREFOX=1` adds Firefox where it is installed), and
+`npm run test:contract` (the API layer against the real backend: it creates a fresh database, starts the backend
+with the scripted agent and the file mailer, runs the tests and drops the database; needs `backend/.venv` and
+PostgreSQL).
 
 ### B0: Foundation (notes)
 
@@ -877,6 +881,93 @@ Decisions made where the design docs were silent (please check):
    29.1.1, because jsdom 30 needs Node 22.22.2 or newer.
 5. Ports: dev server 5173 (the FRONTEND_URL and CORS default of the backend), preview 4173.
 6. The screen designs are kept in the repository (`design/screens/`), so every later phase can be checked against them.
+
+### FE1: Frontend API layer (notes)
+
+Built (in `frontend/src/api/`, as F2 describes):
+- `token.js`: the JWT in localStorage (`sangra_token`), with every access in try/catch. When storage is blocked, the
+  token lives in memory for the session.
+- `client.js`: the only place that calls `fetch`. It adds the base URL and the JWT header; sends objects as JSON and
+  FormData as it is; returns what is inside `{ data }`; and throws one `ApiError { status, code, message }`:
+  - `NETWORK_ERROR` when no answer arrives;
+  - `UNKNOWN_ERROR` for a reply that is not our JSON;
+  - `TIMEOUT` after 30 s (10 minutes for uploads).
+
+  The 401 rule: a 401 on a protected route clears the token and calls the auth state's function once, even when
+  several requests fail together; the public auth routes are exempt and never send the token. Only paths inside the
+  API are accepted, so the token cannot be sent anywhere else.
+- `auth.js`, `projects.js`, `runs.js`: the 22 route functions of F2.2. `startRun` sends FormData when there is a zip.
+  `downloadPackage` fetches the file with the JWT and saves it under the server's file name, or
+  `sangra-run-<id>.zip` if that name is missing or odd.
+- `stream.js`: `openRunStream(runId, onEvent, { onEnd, onError, onReconnecting, onBadEvent })` returns `stop()`.
+  - It reads the event stream with `fetch` and joins pieces cut anywhere, even inside a multi-byte character or
+    between `\r` and `\n`.
+  - It skips pings and numbers it has already seen.
+  - It ends with `onEnd` at the final `status_changed` event.
+  - After a drop or a close without the final event, it reconnects after 2, 4, 8, 16 and 32 s with
+    `Last-Event-ID`; after 5 failed tries it calls `onError` once.
+  - A 404 (or another 4xx) stops at once; a 401 follows the 401 rule.
+  - After `stop()`, no callback is called.
+
+Test results:
+- Unit tests: 161 of 161 pass (Vitest; MSW as the fake backend for the client; a scripted stream backend whose chunks,
+  drops and closes the test controls).
+  - `tests/unit/api/fe1_client.test.js` (34): F01-F06, X01-X07, S01, S02, blocked storage, a request stopped by
+    the page (ABORTED).
+  - `tests/unit/api/fe1_routes.test.js` (76): F10 (all 22 functions: method, path, body, auth header), F12, F13,
+    X10, X11 (every function with a 500 and with a network failure).
+  - `tests/unit/api/fe1_stream.test.js` (28): F20-F28, X20-X25, S20, L01-L03.
+  - `tests/unit/api/fe1_stream_react.test.jsx` (1): X26, React's development mode; then switching run 5 to run 6,
+    then closing.
+- Against the real backend (`npm run test:contract`), 2 of 2 pass:
+  - **F11:** the backend's own route list (`/openapi.json`) and our functions plus the stream match exactly
+    (23 routes; `/health` has no function, as in F2.2).
+  - **F30:** register, verify with the link from the mail file, log in, me, create a project, start a run (scripted
+    agent), stream it to the end while approving the fix: 16 events numbered 1..16, ending with `succeeded`. Then the
+    package downloads (`sangra-run-1.zip`, 1,235 bytes).
+- Numbers: 10,000 events in 108 ms (limit 2 s, L01). One 1 MB event in 1-byte chunks: 1.9 s, correct (L02). 100
+  open/close cycles leave no connection, reader or timer (L03).
+- Lint clean; FE0's tests still pass (6 browser tests, 22 unit tests); build scan clean. Backend: 607 of 607 pass (after the pool change below).
+
+Fixed during this phase (found by the tests):
+1. FE1-L02: the first stream parser rebuilt the whole unfinished text for every chunk (quadratic time: a 1 MB event
+   in 1-byte chunks never finished). It now keeps the pieces in a list and joins them once per line: 1 MB takes 91 ms
+   in the parser.
+2. FE1-F30: the project list from the backend is `{ items, total }`, not a plain list. The contract test caught it
+   before any page used it.
+
+Backend change during this phase (B3-L01 started failing; the target was not changed):
+- **What happened:** the backend suite run for FE1 failed B3-L01 ("`/health` under 200 ms while 50 users log in at
+  once"). Run alone it still failed: 179 to 286 ms. It measured 60 ms in B3 and passed in every full run up to
+  B11; the container had restarted since.
+- **Cause:** the `/health` database ping waited for a free pool connection. The pool started with 1 connection
+  (my B1 choice, `DB_POOL_MIN_SIZE=1`). The burst of 50 logins came right after startup, while the pool was still
+  opening the other 9, and that is slow while bcrypt keeps every core busy. The garbage collector and the event loop
+  were checked and ruled out. Neither the bcrypt hash time (291 ms, the same as in B2) nor the health code had
+  changed. A stray test process from my own first FE1 run also used one core for a while; it was stopped, and the
+  test still failed without it.
+- **Fix:** the whole pool is opened at startup (`DB_POOL_MIN_SIZE` defaults to 10, the pool size of the design; a
+  minimum larger than the maximum is capped). B3-L01 now measures 92 to 109 ms (3 runs). **Please check this
+  change.** The other option is to keep 1 and decide the target again.
+
+Not done here:
+- FE0-F03 on the built files: the pages do not use the API layer yet, so the bundler still leaves it out. F30 shows
+  that VITE_API_URL decides where requests go (the tests pointed it at a backend on a random port). The check of the
+  built files follows in FE2, when the first page sends requests.
+
+Decisions made where the design docs were silent (please check):
+1. New client error codes: `TIMEOUT` (no answer within 30 s, or 10 minutes for uploads and downloads), `ABORTED`
+   (stopped by the page, for example when leaving during an upload) and `BAD_PATH` (a path outside the API, never
+   sent).
+2. The public auth routes (register, login, verify, forgot, reset) never send the token, as they do not need it.
+3. Stream: the reconnect count starts again when an event arrives, so a long run with a few short drops does not
+   give up. A 5xx answer is retried like a drop; any other error answer (404, 403 ...) stops at once.
+4. Stream: an event whose data is not JSON is skipped and passed to `onBadEvent` (or written to the console as a
+   warning when the page gives no callback).
+5. Downloads accept only a plain file name from the server (letters, digits, `.`, `_`, `-`), otherwise
+   `sangra-run-<id>.zip`.
+6. The API tests run in Vitest's Node environment, whose `fetch`, `FormData` and streams behave like a browser's
+   (jsdom's FormData does not work with Node's fetch). The React test runs in jsdom.
 
 ---
 

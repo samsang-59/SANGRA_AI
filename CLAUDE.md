@@ -10,7 +10,8 @@
 
 ## After EVERY phase (always, without being asked)
 1. Run the whole test suite (`cd backend && .venv/bin/pytest -q`), not only the new phase. In the frontend phases
-   also: `cd frontend && npm run lint && npm test && npm run build && npm run check:build && npx playwright test`.
+   also: `cd frontend && npm run lint && npm test && npm run build && npm run check:build && npx playwright test
+   && npm run test:contract` (the last one starts a backend in its test setup).
 2. Update README.md: the progress table, a "Bx: ... (notes)" section with what was built, test results and numbers,
    and the decisions made where the docs were silent.
 3. Commit (message starts with the phase id, e.g. "B6: ...") and push to GitHub right away.

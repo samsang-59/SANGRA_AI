@@ -10,7 +10,8 @@
     "lint": "eslint .",
     "test": "vitest run",
     "test:e2e": "playwright test",
-    "check:build": "node scripts/check-build.mjs"
+    "check:build": "node scripts/check-build.mjs",
+    "test:contract": "node scripts/run-contract.mjs"
   },
   "dependencies": {
     "@fontsource/inter": "5.3.0",
