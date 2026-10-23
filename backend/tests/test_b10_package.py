@@ -273,8 +273,11 @@ async def test_B10_F06_the_jobs_are_scheduled(db, make_settings):
     await insert_package(db, run["id"], storage_path=str(target), created_at=_ago(days=8), expires_at=_ago(days=1))
     app = create_app(fast)
     async with LifespanManager(app):
-        deadline = time.monotonic() + 5
-        while target.exists() and time.monotonic() < deadline:
+        # Wait until the job has done both steps: the file deleted, then the row marked (a check on the file alone
+        # could stop the app between the two steps; the next cleanup would then mark it).
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline and (target.exists()
+                                                or (await package_rows(db, run["id"]))[0]["deleted_at"] is None):
             await asyncio.sleep(0.05)
     assert not target.exists()
     assert (await package_rows(db, run["id"]))[0]["deleted_at"] is not None

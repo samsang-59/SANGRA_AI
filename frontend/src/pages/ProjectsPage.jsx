@@ -8,9 +8,8 @@ import EmptyState from "../components/EmptyState.jsx";
 import { Notice, Spinner } from "../components/Status.jsx";
 import { messageFor } from "../errors.js";
 import { keys, useActiveRun, useProjects } from "../hooks/queries.js";
+import { ACTIVE_RUN_REASON, VERIFY_REASON } from "../runRules.js";
 
-export const VERIFY_REASON = "Verify your email to start runs";
-export const ACTIVE_RUN_REASON = "A run is already in progress";
 
 function Source({ project }) {
   if (project.source_type === "zip") {

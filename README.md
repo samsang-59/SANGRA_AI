@@ -7,7 +7,7 @@ You describe a bug in plain English. SANGRA_AI searches your code, finds the wro
 it undoes the change and tries again (up to 3 times). Your original code is never touched.
 
 > **Status:** implementation in progress, phase by phase (see [the plan](06_implementation_plan.md) and
-> [Implementation progress](#implementation-progress) below). Current phase: **FE3 Projects pages** (awaiting review). The backend (B0 to B11) is complete.
+> [Implementation progress](#implementation-progress) below). Current phase: **FE4 Start run page and History page** (awaiting review). The backend (B0 to B11) is complete.
 
 ---
 
@@ -159,8 +159,9 @@ A phase is done only when all of its tests pass **and** all earlier tests still 
 | FE0 Frontend project setup (Vite, React, router, QueryClient, env, design tokens) | Done (approved) | 22 unit + 6 browser tests pass (Chromium); lint and build scan clean; backend 607 of 607 still pass. FE0-B01 in Firefox not run yet |
 | FE1 API layer (client, 22 route functions, live stream helper) | Done (approved) | 161 unit + 2 real-backend contract tests pass; FE0 tests still pass; backend 607 of 607 pass |
 | FE2 Auth state, guards and auth pages (register, login, verify, forgot, reset, account) | Done (approved) | 234 unit + 11 browser + 2 contract tests pass; backend 607 of 607 pass |
-| FE3 Projects pages (list, create, edit, delete) | Built, awaiting review | 282 unit + 17 browser + 2 contract tests pass (Chromium; Firefox blocked by the network policy); backend 607 of 607 pass |
-| FE4 to FE7 | Not started | |
+| FE3 Projects pages (list, create, edit, delete) | Done (approved) | 282 unit + 17 browser + 2 contract tests pass (Chromium; Firefox blocked by the network policy); backend 607 of 607 pass |
+| FE4 Start run page and History page | Built, awaiting review | 317 unit + 23 browser + 2 contract tests pass (Chromium); backend 607 of 607 pass |
+| FE5 to FE7 | Not started | |
 
 ### Open items (manual checks still to do)
 
@@ -1094,6 +1095,59 @@ Decisions made where the design docs were silent (please check):
    of the code with each run."
 4. Saving an edit with no change sends nothing and goes back to the list.
 5. Below 900 px wide the list hides the branch and test-command columns so the actions stay visible.
+
+### FE4: Start run page and History page (notes)
+
+Built (05_frontend_design.md F1, F4, F5; the screens "projects id run · StartRunPage (zip project)" and
+"runs · HistoryPage"):
+- `src/pages/StartRunPage.jsx`, at `/projects/:id/run`:
+  - The project's name, language, source type and test command as tags, then the bug text with a live counter
+    ("0 / 2000 · min 10").
+  - For zip projects only, the zip picker: drop or browse, then "name · size" with remove. The file is checked
+    before any upload (`.zip`, at most 50 MB, not empty).
+  - Start is disabled while the text is shorter than 10 or longer than 2,000 characters (after trimming), the zip
+    is missing or wrong, or the email is not verified. It sends JSON, or FormData with the zip, and opens
+    `/runs/:id`.
+  - ACTIVE_RUN_EXISTS shows "You already have a run in progress" with "open it" (the link comes from the "active"
+    filter). Other errors (EMAIL_NOT_VERIFIED, ZIP_REQUIRED, NOT_FOUND …) are shown on the page.
+  - Leaving the page during an upload stops it. The page of a project that is not yours shows "page not found".
+- `src/pages/HistoryPage.jsx`, at `/runs`:
+  - The runs as a table (run, project, status badge, date as "22 Oct 2026, 14:05" in the browser's time zone,
+    "open →"), 20 per page with prev / next and "page X of Y".
+  - Filters for project and status (all, active, or one status). Filters and page are kept in the address
+    (`?project=2&status=failed&page=2`); odd values (page=abc, -1, 0, 1.5, status=foo) fall back to the defaults.
+  - A click on a row opens the run.
+  - Empty states: "No runs yet - start one from a project" (with "start a run" → projects), "No runs match these
+    filters", and a page past the end ("There are no runs on this page" with "show all runs").
+- `src/components/StatusBadge.jsx` and `src/runStatus.js`: the badge colours of the foundations sheet (cyan = agent
+  working, amber = waiting for you, green = succeeded, red = failed, grey = stopped) and the date format.
+  `src/runRules.js`: the shared rules and texts.
+- After a start, the history and the active run are refreshed (F4 keys).
+
+Test results:
+- Unit tests: 317 of 317 pass (35 new in `tests/unit/fe4_runs.test.jsx`: F01-F04, X01-X08, S01, L02).
+- Browser tests (Chromium, dev and built app): 23 pass, 1 skipped by design. New:
+  - The zip upload in a real browser sends `zip_file` with the file name, then opens the run page.
+  - FE4-L01: 500 runs. On the built app the first page shows in 295 ms (limit 1 s, including the start of the
+    app) and a filter change takes 146 ms (limit 500 ms). On the dev server: 639 ms and 164 ms.
+  - FE4-L02: a 2,000-character bug text is sent whole and causes no sideways scrolling.
+- Screenshots of both pages were compared with the designs and match.
+- Lint: no problems. Build scan clean. Contract tests: 2 of 2 pass. Backend: 607 of 607 pass (after the test fix below).
+
+Decisions made where the design docs were silent (please check):
+1. The bug text limits (10 to 2,000) are counted after trimming spaces, as the backend does; the counter shows that
+   count.
+2. The history keeps the filters in the address as `project`, `status` and `page` (page 1 and empty filters are
+   left out). The status filter offers "active" too (the backend's special value).
+3. Dates are shown in the browser's time zone.
+4. A page past the end shows an empty state with "show all runs"; a page number is never corrected silently.
+5. The start button reads "uploading…" while a zip is sent and "starting…" otherwise.
+
+Backend test fixed during this phase:
+- **B10-F06** ("the cleanup jobs are scheduled") failed once in the full run, and 1 time in 5 when run alone. The
+  test waited only until the file was deleted, then stopped the app. The job deletes the file first and marks the row
+  (`deleted_at`) right after, so a stop in between left the row unmarked; the next cleanup marks it, since a missing
+  file counts as deleted. The app was right. The test now waits for both steps: 8 of 8 runs pass.
 
 ---
 

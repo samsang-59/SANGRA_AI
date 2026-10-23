@@ -40,8 +40,8 @@ export function fakeBackend() {
     }),
     http.post(api("/auth/resend-verification"), ({ request }) =>
       authed(request) ? HttpResponse.json({ data: { message: "We sent a new verification link." } }) : unauthorized()),
+    ...projectRoutes(state), // base routes: they stay after server.resetHandlers()
   );
-  server.use(...projectRoutes(state));
   server.events.on("request:start", ({ request }) => seen.push(request.clone()));
   return { server, seen, state };
 }
@@ -106,9 +106,27 @@ export function projectRoutes(state) {
       return before === state.projects.length ? notFound() : HttpResponse.json({ data: { message: "Deleted." } });
     })),
     http.get(api("/runs"), guard(({ request }) => {
-      const status = new URL(request.url).searchParams.get("status");
-      const items = status === "active" && state.activeRun ? [state.activeRun] : [];
-      return HttpResponse.json({ data: { items, total: items.length, page: 1, limit: 20 } });
+      const query = new URL(request.url).searchParams;
+      const status = query.get("status");
+      if (status === "active" && !state.runs) {
+        const items = state.activeRun ? [state.activeRun] : [];
+        return HttpResponse.json({ data: { items, total: items.length, page: 1, limit: 20 } });
+      }
+      const active = ["started", "searching", "waiting_for_hint", "waiting_for_approval", "applying", "testing"];
+      let rows = state.runs ?? [];
+      if (state.activeRun && status === "active") rows = [state.activeRun, ...rows];
+      if (query.get("project_id")) rows = rows.filter((r) => String(r.project_id) === query.get("project_id"));
+      if (status === "active") rows = rows.filter((r) => active.includes(r.status));
+      else if (status) rows = rows.filter((r) => r.status === status);
+      const page = Number(query.get("page") || 1);
+      const limit = Number(query.get("limit") || 20);
+      const items = rows.slice((page - 1) * limit, page * limit);
+      return HttpResponse.json({ data: { items, total: rows.length, page, limit } });
+    })),
+    http.post(api("/projects/:id/runs"), guard(async ({ params, request }) => {
+      if (state.startReply) return state.startReply(request);
+      if (!state.projects.find((p) => String(p.id) === params.id)) return notFound();
+      return HttpResponse.json({ data: { id: 77, project_id: Number(params.id), status: "started" } }, { status: 201 });
     })),
   ];
 }
@@ -117,4 +135,9 @@ export function makeProject(id, overrides = {}) {
   return { id, name: `project-${id}`, language: "java", source_type: "github",
     source_reference: `https://github.com/sangram/project-${id}`, branch: null, test_command: "mvn test",
     created_at: "2026-10-22T10:00:00Z", updated_at: "2026-10-22T10:00:00Z", ...overrides };
+}
+
+export function makeRun(id, overrides = {}) {
+  return { id, project_id: 1, project_name: "summer-sale-service", bug_description: "Discount shows 5% not 10%",
+    status: "succeeded", stop_reason: null, created_at: "2026-10-22T14:05:00Z", ...overrides };
 }

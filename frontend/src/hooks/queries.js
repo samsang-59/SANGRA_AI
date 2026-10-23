@@ -31,3 +31,14 @@ export function useActiveRun() {
     refetchInterval: 30_000,
   });
 }
+
+/** One page of the history (key ["runs", filters, page], F4). */
+export function useRuns({ projectId, status, page }) {
+  return useQuery({
+    queryKey: ["runs", { projectId: projectId ?? null, status: status ?? null }, page],
+    queryFn: () => listRuns({ projectId, status, page, limit: RUNS_PER_PAGE }),
+    placeholderData: (previous) => previous, // the old page stays while the next one loads
+  });
+}
+
+export const RUNS_PER_PAGE = 20;

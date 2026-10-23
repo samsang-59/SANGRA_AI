@@ -1,8 +1,8 @@
 // A fake backend inside the browser (Playwright routes) for the page tests that do not need the real one.
 export const API = "http://localhost:8000/api/v1";
 
-export async function mockApi(page, { user, token = "aaa.bbb.ccc", projects = [], activeRun = null } = {}) {
-  const state = { user, token, calls: [], projects, activeRun };
+export async function mockApi(page, { user, token = "aaa.bbb.ccc", projects = [], activeRun = null, runs = [] } = {}) {
+  const state = { user, token, calls: [], projects, activeRun, runs, uploads: [] };
   await page.route(`${API}/**`, async (route) => {
     const request = route.request();
     const path = new URL(request.url()).pathname.replace("/api/v1", "");
@@ -42,8 +42,23 @@ export async function mockApi(page, { user, token = "aaa.bbb.ccc", projects = []
       return json(200, { data: { message: "Deleted." } });
     }
     if (path === "/runs") {
-      const items = state.activeRun ? [state.activeRun] : [];
-      return json(200, { data: { items, total: items.length, page: 1, limit: 20 } });
+      const query = new URL(request.url()).searchParams;
+      if (query.get("status") === "active") {
+        const items = state.activeRun ? [state.activeRun] : [];
+        return json(200, { data: { items, total: items.length, page: 1, limit: 20 } });
+      }
+      let rows = state.runs;
+      if (query.get("project_id")) rows = rows.filter((r) => String(r.project_id) === query.get("project_id"));
+      if (query.get("status")) rows = rows.filter((r) => r.status === query.get("status"));
+      const pageNo = Number(query.get("page") || 1);
+      const limit = Number(query.get("limit") || 20);
+      return json(200, { data: { items: rows.slice((pageNo - 1) * limit, pageNo * limit), total: rows.length,
+        page: pageNo, limit } });
+    }
+    const start = /^\/projects\/(\d+)\/runs$/.exec(path);
+    if (start && request.method() === "POST") {
+      state.uploads.push({ contentType: request.headers()["content-type"], body: request.postDataBuffer() });
+      return json(201, { data: { id: 77, status: "started" } });
     }
     return json(404, { error: { code: "NOT_FOUND", message: "Not found." } });
   });
