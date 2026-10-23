@@ -170,8 +170,15 @@ def main(argv: list[str] | None = None) -> int:
             print("Pending: " + (", ".join(pending) or "none"))
             return 0
         applied_now = run_migrations(database_url, args.dir)
+        # LangGraph keeps its own tables (created and updated by its setup() call, 03_database_design.md).
+        from app.agent.workflow import setup_langgraph_tables
+
+        setup_langgraph_tables(database_url)
     except MigrationError as exc:
         print(f"Migration failed: {exc}", file=sys.stderr)
+        return 1
+    except Exception as exc:
+        print(f"Migration failed while setting up LangGraph's tables: {type(exc).__name__}", file=sys.stderr)
         return 1
     print("Applied: " + ", ".join(applied_now) if applied_now else "Nothing to apply, the database is up to date.")
     return 0

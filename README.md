@@ -7,7 +7,7 @@ You describe a bug in plain English. SANGRA_AI searches your code, finds the wro
 it undoes the change and tries again (up to 3 times). Your original code is never touched.
 
 > **Status:** implementation in progress, phase by phase (see [the plan](06_implementation_plan.md) and
-> [Implementation progress](#implementation-progress) below). Current phase: **B8 LLM client and prompts** (awaiting review).
+> [Implementation progress](#implementation-progress) below). Current phase: **B9 The LangGraph agent** (awaiting review).
 
 ---
 
@@ -152,8 +152,9 @@ A phase is done only when all of its tests pass **and** all earlier tests still 
 | B5 Runs, events, state rules, live stream (fake agent) | Done (approved) | 100 of 100 pass |
 | B6 Workspace manager and the 3 read-only code tools | Done (approved) | 61 of 61 pass |
 | B7 Docker test runner | Done (approved) | 24 of 24 pass; B7-M01 is manual (Windows), not done yet |
-| B8 LLM client and prompts | Built, awaiting review | 29 of 29 pass (479 in total with B0 to B7); B8-M01 and B8-Q01 (real Groq) not run yet, see below |
-| B9 to B11, FE0 to FE7 | Not started | |
+| B8 LLM client and prompts | Done (approved) | 29 of 29 pass; B8-M01 and B8-Q01 (real Groq) not run yet |
+| B9 The LangGraph agent (11 steps, pause and resume, limits) | Built, awaiting review | 62 of 62 pass (541 in total with B0 to B8); B9-E01 (real Groq) not run yet |
+| B10 to B11, FE0 to FE7 | Not started | |
 
 ### Running the backend
 
@@ -389,8 +390,8 @@ Decisions made where the design docs were silent (please check):
 4. An accepted attempt keeps the status `waiting_for_approval` with `decision = accepted` until the agent applies it
    (the table has no `accepted` status).
 5. An odd `Last-Event-ID` (not a number, negative, too big) counts as 0: the whole diary is sent again.
-6. Until the agent exists (B9), the real app ends a started run at once as `failed` / `internal_error` with the summary
-   "The agent is not part of this build yet". Tests use the fake agent.
+6. Until the agent existed (B5 to B8), the app ended a started run at once as `failed` / `internal_error`. Since B9 the
+   real LangGraph agent runs every run.
 7. Startup recovery only ends runs created before this server process started and not run by it. If the database is down
    at startup, recovery is tried again in the background every 5 seconds.
 8. B5-C02 (Accept and Cancel at the same moment): a cancel is allowed while a run is `applying`, so when the Accept lands
@@ -531,6 +532,60 @@ Decisions made where the design docs were silent (please check):
 4. Token counting for B8-X08 uses a cautious estimate (3 characters per token) because the tokenizer files cannot be
    downloaded from this environment. Real counts come from Groq's own `usage` numbers at run time.
 5. The tool answer size cap stays at 16,000 characters (the open question from B6): 15 answers at the cap fit.
+
+### B9: The LangGraph agent (notes)
+
+Built (in `app/agent/`):
+- `graph.py`: the fixed flow of section 6.2 with the 11 steps; `nodes/steps.py`: the steps themselves; `state.py`: the
+  small state of section 6.3 (no counters, no chat, no whole files); `edits.py`: the edit checker shared by
+  check_proposal, apply_edits (all or nothing, each file written through a temporary file and an atomic rename) and,
+  in B10, "Apply to my folder"; `workflow.py`: start and resume through LangGraph with the Postgres checkpointer
+  (its own connections); `fakes.py`: the scripted LLM and test runner for test setups (Gaps #10).
+- The AgentRunner now runs this graph. Each pause is a "request" step (does the work) followed by a "wait" step that only
+  pauses; after a resume the decision and the hint are read from the database, never from the resume value.
+- When a run ends (agent, cancel, timeout or restart), in this order: anything still changed is undone (unless the run
+  succeeded), the temporary copy is deleted (`workspace_deleted_at`), and the LangGraph snapshot is deleted (by the
+  runner after the graph has ended, or at once if no graph runs for the run). B10 adds the package before the copy
+  is deleted. Deleting a run or a project also deletes its LangGraph rows.
+- `python -m app.migrate` now also creates LangGraph's own tables (its `setup()` call).
+
+Checked at implementation (the open items of section 6.7):
+- When LangGraph resumes, the paused step starts again from its first line (confirmed against Postgres), so the
+  request/wait split is needed and works: the approval event and the status change happen once per pause (B9-R01).
+- `adelete_thread(thread_id)` removes every LangGraph row of a run. Resuming a thread that has no paused snapshot would
+  start the graph again from the top with an empty state, so the workflow refuses that (B9-C04).
+
+Test results: `tests/test_b9_agent.py` (43) and `tests/test_b9_agent_recovery.py` (19), 62 tests, all pass, three
+runs in a row. They use the real graph and the real Postgres checkpointer with a FakeLLM and a FakeTestRunner, plus one
+full run with the real workspace and the real Docker runner: the Amazon discount example as a Maven project, the
+baseline fails on the 5% bug, the approved fix passes the tests, the run succeeds. Numbers: 50 runs paused at approval
+leave 0 running tasks and use about 19 KB of saved state each (B9-L01, B9-L04); 20 runs at the same time keep the event
+loop delay at 16 ms at most (B9-L02); 100 runs in a row leave no tasks, snapshots or folders behind (B9-L03).
+
+Fixed during this phase (found by the tests):
+1. B9-X11: after an error inside a step, a LangGraph save running in the background could land after the snapshot was
+   deleted. The graph now saves every checkpoint before going on (`durability="sync"`).
+2. The AgentRunner forgot a finished task before deleting its snapshot, so for a moment a run looked idle while its
+   snapshot still existed. It now deletes first, then forgets the task.
+
+**Not run yet (manual):** B9-E01 (the same happy path with the real Groq), for the same reason as B8-M01: `api.groq.com`
+is blocked here and a key is needed.
+
+Decisions made where the design docs were silent (please check):
+1. Stop reasons for a baseline that cannot run: `baseline_could_not_run` when the test command was not found or the
+   tests ran too long, `test_runner_error` when Docker could not run them. A baseline whose tests FAIL is normal (that is
+   usually the bug) and the run goes on.
+2. How old_code is compared (section 6.7): line by line without the line endings (so Windows files work), everything
+   else exactly (spaces and tabs count); one newline at the end of old_code is ignored. New lines keep the file's own
+   line ending. "Changed lines" = lines removed + lines added. Files in generated folders cannot be edited.
+3. A proposal that cannot be read counts as one failed check (3 in a row: `proposal_invalid`), like a proposal that
+   fails the checks. The problems, with the real lines of the file, go back to the LLM.
+4. The edits of an attempt are saved per file from the bottom up (section 6.4 step 6).
+5. Gaps #10 is built in its simplest form: `AGENT_TEST_MODE=fake` with `AGENT_FAKE_SCRIPT` (a JSON file with the LLM
+   answers and the test results, used in order and then from the top again) and `MAILER_MODE=file` with `MAIL_FILE`.
+   Both are refused in deployed mode. The browser tests (FE7) may need more from them.
+6. The run detail events for steps use the existing event types: `tool_called` for each tool call, `tool_result` for
+   "found N places", "a fix was drafted" and "applied N edits in M files", `error` for clear failure messages.
 
 ---
 

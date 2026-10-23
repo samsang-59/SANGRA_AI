@@ -9,6 +9,7 @@ so for example a register still succeeds and the user can ask for the link again
 """
 
 import asyncio
+import json
 import logging
 import smtplib
 import sys
@@ -62,9 +63,28 @@ class SmtpMailer:
         await asyncio.to_thread(self._send_sync, message)
 
 
+class FileMailer:
+    """Test setups only (Gaps #10): appends every email as one JSON line to MAIL_FILE, so a browser test can read
+    the verification link. Refused in deployed mode by the settings."""
+
+    def __init__(self, path):
+        self._path = path
+
+    async def send_email(self, to: str, subject: str, body: str) -> None:
+        line = json.dumps({"to": to, "subject": subject, "body": body}) + "\n"
+        await asyncio.to_thread(self._append, line)
+
+    def _append(self, line: str) -> None:
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        with self._path.open("a", encoding="utf-8") as out:
+            out.write(line)
+
+
 def build_mailer(settings: Settings) -> Mailer:
     if settings.mailer_mode == "smtp":
         return SmtpMailer(settings)
+    if settings.mailer_mode == "file":
+        return FileMailer(settings.mail_file)
     return ConsoleMailer()
 
 

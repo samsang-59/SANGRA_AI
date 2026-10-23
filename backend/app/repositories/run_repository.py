@@ -257,3 +257,24 @@ async def find_interrupted_runs(pool: AsyncConnectionPool, created_before) -> li
             "SELECT id, user_id, status FROM runs WHERE status = ANY(%s) AND created_at < %s ORDER BY id",
             (list(INTERRUPTED_STATUSES), created_before))
         return await cur.fetchall()
+
+
+async def set_workspace_ready(pool: AsyncConnectionPool, run_id: int, workspace_path: str, source_commit: str | None
+                              ) -> None:
+    """Records where the copy lives and, for GitHub, the exact commit that was cloned."""
+    async with pool.connection() as conn:
+        await conn.execute(
+            "UPDATE runs SET workspace_path = %s, source_commit = %s, updated_at = now() WHERE id = %s",
+            (workspace_path, source_commit, run_id))
+
+
+async def add_tokens(pool: AsyncConnectionPool, run_id: int, tokens: int) -> None:
+    async with pool.connection() as conn:
+        await conn.execute(
+            "UPDATE runs SET total_tokens = COALESCE(total_tokens, 0) + %s WHERE id = %s", (tokens, run_id))
+
+
+async def mark_workspace_deleted(pool: AsyncConnectionPool, run_id: int) -> None:
+    async with pool.connection() as conn:
+        await conn.execute(
+            "UPDATE runs SET workspace_deleted_at = now() WHERE id = %s AND workspace_deleted_at IS NULL", (run_id,))

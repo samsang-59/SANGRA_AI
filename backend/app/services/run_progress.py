@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from psycopg_pool import AsyncConnectionPool
 
 from app.core.config import Settings
-from app.repositories import attempt_repository, event_repository, run_repository
+from app.repositories import attempt_repository, event_repository, run_repository, test_result_repository
 
 logger = logging.getLogger("app.run")
 
@@ -37,9 +37,14 @@ STOP_REASON_TEXT = {
 }
 
 
-def summary_for(final_status: str, stop_reason: str | None) -> str:
+NO_TEST_COVERS_LABEL = "Tests passed, but no test covers this bug, please verify the fix yourself."
+
+
+def summary_for(final_status: str, stop_reason: str | None, baseline_passed: bool = False) -> str:
     """The final summary, from a template (no LLM call)."""
     if final_status == "succeeded":
+        if baseline_passed:  # the tests already passed before the fix, so they prove nothing about it
+            return f"The fix was applied. {NO_TEST_COVERS_LABEL}"
         return "The fix was applied and the tests passed."
     reason = STOP_REASON_TEXT.get(stop_reason or "", "The run ended.")
     return f"The run {final_status}. {reason}"
@@ -74,11 +79,43 @@ class RunProgress:
     async def load_run(self, run_id: int) -> dict | None:
         return await run_repository.find_by_id(self.pool, run_id)
 
+    async def set_workspace_ready(self, run_id: int, workspace_path: str, source_commit: str | None) -> None:
+        await run_repository.set_workspace_ready(self.pool, run_id, workspace_path, source_commit)
+
+    async def add_tokens(self, run_id: int, tokens: int) -> None:
+        if tokens:
+            await run_repository.add_tokens(self.pool, run_id, tokens)
+
+    async def mark_workspace_deleted(self, run_id: int) -> None:
+        await run_repository.mark_workspace_deleted(self.pool, run_id)
+
+    async def save_test_result(self, run_id: int, attempt_id: int | None, test_type: str, outcome) -> dict:
+        return await test_result_repository.create(
+            self.pool, run_id, attempt_id, test_type, outcome.status, outcome.exit_code, outcome.log_excerpt,
+            outcome.duration_ms, outcome.docker_image, outcome.started_at, outcome.finished_at)
+
+    async def attempt_with_edits(self, run_id: int, attempt_id: int) -> dict | None:
+        return await attempt_repository.find_with_edits(self.pool, run_id, attempt_id)
+
+    async def attempts_of_run(self, run_id: int) -> list[dict]:
+        return await attempt_repository.list_with_edits(self.pool, run_id)
+
+    async def mark_attempt(self, attempt_id: int, status: str) -> None:
+        await attempt_repository.mark_attempt_status(self.pool, attempt_id, status)
+
+    async def set_reverted(self, attempt_id: int) -> None:
+        await attempt_repository.set_reverted_at(self.pool, attempt_id)
+
+    async def latest_hint(self, run_id: int) -> str | None:
+        return await event_repository.latest_hint(self.pool, run_id)
+
     async def mark_finished(self, run_id: int, final_status: str, stop_reason: str | None,
                             summary: str | None = None) -> dict | None:
         """Step 1 of finishing: the final status (conditional). None = the run had already finished."""
-        run = await run_repository.finish_run(self.pool, run_id, final_status, stop_reason,
-                                              summary or summary_for(final_status, stop_reason))
+        if summary is None:
+            baseline = await test_result_repository.find_baseline(self.pool, run_id)
+            summary = summary_for(final_status, stop_reason, bool(baseline and baseline["status"] == "passed"))
+        run = await run_repository.finish_run(self.pool, run_id, final_status, stop_reason, summary)
         if run is not None:
             logger.info("Run %s finished: %s (%s)", run_id, final_status, stop_reason)
         return run

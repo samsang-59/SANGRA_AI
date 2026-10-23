@@ -10,3 +10,5 @@ PyJWT==2.15.1
 email-validator==2.3.0
 python-multipart==0.0.32
 groq==1.7.0
+langgraph==1.2.16
+langgraph-checkpoint-postgres==3.2.0
