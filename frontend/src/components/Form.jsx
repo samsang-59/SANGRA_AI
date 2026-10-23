@@ -3,7 +3,7 @@
 import { forwardRef, useId, useState } from "react";
 
 export const Field = forwardRef(function Field(
-  { label, hint, hintMono = false, error, rules, aside, type = "text", textarea = false, ...input },
+  { label, hint, hintMono = false, mono = false, error, rules, aside, type = "text", textarea = false, ...input },
   ref,
 ) {
   const id = useId();
@@ -19,7 +19,7 @@ export const Field = forwardRef(function Field(
         ref={ref}
         id={id}
         type={textarea ? undefined : type}
-        className={`input${error ? " input-error" : ""}`}
+        className={`input${mono ? " input-mono" : ""}${error ? " input-error" : ""}`}
         aria-invalid={error ? "true" : undefined}
         aria-describedby={describedBy || undefined}
         {...input}

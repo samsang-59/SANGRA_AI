@@ -46,3 +46,54 @@ export function safeReturnPath(value) {
   }
   return value;
 }
+
+// --- projects (the same shape rules as backend/app/validators/project_rules.py) ---------------------------------
+
+export const PROJECT_NAME_MAX = 100;
+export const TEST_COMMAND_MAX = 500;
+export const BRANCH_MAX = 255;
+
+const GITHUB_URL = /^https:\/\/github\.com\/[A-Za-z0-9][A-Za-z0-9-]{0,38}\/[A-Za-z0-9._-]{1,100}$/;
+const BRANCH_CHARS = /^[A-Za-z0-9._/-]+$/;
+
+export function checkProjectName(name) {
+  const value = name.trim();
+  if (!value || value.length > PROJECT_NAME_MAX) return `Name must be 1-${PROJECT_NAME_MAX} characters.`;
+  return "";
+}
+
+export function checkTestCommand(command) {
+  const value = command.trim();
+  if (!value || value.length > TEST_COMMAND_MAX) return `Test command must be 1-${TEST_COMMAND_MAX} characters.`;
+  return "";
+}
+
+export function checkGithubUrl(url) {
+  const value = url.trim();
+  if (!value) return "Enter the GitHub URL.";
+  const repo = value.split("/").pop();
+  if (!GITHUB_URL.test(value) || repo === "." || repo === ".." || repo.startsWith("-")) {
+    return "Must look like https://github.com/owner/repo";
+  }
+  return "";
+}
+
+export function checkLocalPath(path) {
+  const value = path.trim();
+  if (!value) return "Enter the folder path.";
+  if (value.includes("\u0000")) return "Must be an absolute folder path.";
+  const absolute = value.startsWith("/") || /^[A-Za-z]:[\\/]/.test(value) || value.startsWith("\\\\");
+  if (!absolute) return "Must be an absolute folder path (for example C:\\code\\shop or /home/me/shop).";
+  if (value.split(/[\\/]/).includes("..")) return "Must not contain '..'.";
+  return "";
+}
+
+export function checkBranch(branch) {
+  const value = branch.trim();
+  if (!value) return ""; // empty = the repo's default branch
+  if (value.length > BRANCH_MAX || !BRANCH_CHARS.test(value) || /^[-/.]/.test(value) || /(\/|\.|\.lock)$/.test(value)
+      || value.includes("..") || value.includes("//") || value.includes("/.")) {
+    return "Not a valid branch name (letters, digits, . _ - and /, for example feature/x-1).";
+  }
+  return "";
+}

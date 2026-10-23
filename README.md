@@ -7,7 +7,7 @@ You describe a bug in plain English. SANGRA_AI searches your code, finds the wro
 it undoes the change and tries again (up to 3 times). Your original code is never touched.
 
 > **Status:** implementation in progress, phase by phase (see [the plan](06_implementation_plan.md) and
-> [Implementation progress](#implementation-progress) below). Current phase: **FE2 Auth state, route guards and auth pages** (awaiting review). The backend (B0 to B11) is complete.
+> [Implementation progress](#implementation-progress) below). Current phase: **FE3 Projects pages** (awaiting review). The backend (B0 to B11) is complete.
 
 ---
 
@@ -158,8 +158,9 @@ A phase is done only when all of its tests pass **and** all earlier tests still 
 | B11 End to end, security sweep, soak and chaos tests | Done (approved) | 30 of 30 pass (607 in total with B0 to B10); B11-E01 to E07 with the real Groq not run yet |
 | FE0 Frontend project setup (Vite, React, router, QueryClient, env, design tokens) | Done (approved) | 22 unit + 6 browser tests pass (Chromium); lint and build scan clean; backend 607 of 607 still pass. FE0-B01 in Firefox not run yet |
 | FE1 API layer (client, 22 route functions, live stream helper) | Done (approved) | 161 unit + 2 real-backend contract tests pass; FE0 tests still pass; backend 607 of 607 pass |
-| FE2 Auth state, guards and auth pages (register, login, verify, forgot, reset, account) | Built, awaiting review | 234 unit + 11 browser + 2 contract tests pass; backend 607 of 607 pass |
-| FE3 to FE7 | Not started | |
+| FE2 Auth state, guards and auth pages (register, login, verify, forgot, reset, account) | Done (approved) | 234 unit + 11 browser + 2 contract tests pass; backend 607 of 607 pass |
+| FE3 Projects pages (list, create, edit, delete) | Built, awaiting review | 282 unit + 17 browser + 2 contract tests pass (Chromium; Firefox blocked by the network policy); backend 607 of 607 pass |
+| FE4 to FE7 | Not started | |
 
 ### Open items (manual checks still to do)
 
@@ -1041,6 +1042,58 @@ Decisions made where the design docs were silent (please check):
    characters).
 5. A saved token that is not shaped like a JWT (three dot-separated parts) is removed without asking the backend.
 6. Password fields have a "show/hide" text button inside the field (FE2-S12); the screens do not show one.
+
+### FE3: Projects pages (notes)
+
+Built (05_frontend_design.md F4, F5; the screens "projects · ProjectsPage", "projects · empty + unverified user" and
+"projects new · projects id edit · ProjectFormPage"):
+- `src/pages/ProjectsPage.jsx`: the list as a table: name, language, source (type, then the URL or path; zip shows
+  "zip uploaded per run"), branch ("default" when empty), test command, and run / edit / delete. It shows a spinner
+  while loading, an error with a retry button, and the empty state "No projects yet - create one".
+  - **Run** opens `/projects/:id/run`. It is disabled with the reason beside it when the email is not verified
+    ("Verify your email to start runs") or a run is already in progress.
+  - **Delete** opens a confirm box ("Delete project?", "<name> and all its runs will be deleted."). Errors such as
+    PROJECT_HAS_ACTIVE_RUN are shown above the list.
+  - Long names, URLs, paths and commands are cut with "…", and the full text is in a tooltip.
+- `src/pages/ProjectFormPage.jsx`: one form for new and edit.
+  - Fields: name; language and source type as choice chips; the GitHub URL or folder path (hidden for zip); the
+    branch (github only, optional); the test command.
+  - It checks the backend's own rules before sending (`src/validation.js`, the same as `project_rules.py`).
+  - Edit fills the form and sends only the fields that changed: a cleared branch is sent as null, and switching to
+    zip clears the reference.
+  - Opening the edit page of a project that is not yours, or does not exist, shows the "page not found" page.
+    Saving a project deleted meanwhile goes back to the list with a message.
+- `src/hooks/queries.js`: `useProjects`, `useProject`, and `useActiveRun` (GET /runs?status=active, refreshed every 30
+  s; FE7 adds the banner on top of it), with the keys of F4. Lists refresh after create, edit and delete.
+- Shared: `ConfirmDialog` (the focus starts on "cancel", Tab stays inside, Escape closes, the focus returns to the
+  button that opened it) and `EmptyState`.
+
+Test results:
+- Unit tests: 282 of 282 pass (48 new in `tests/unit/fe3_projects.test.jsx`: F01-F05, X01-X07, S01, S02, U01, U02,
+  L01).
+- Browser tests (Chromium, dev and built app): 17 pass, 1 skipped by design. New:
+  - FE3-U01 at 1280 and 768 px: 100-character names, a long GitHub URL, a long Windows path and a 500-character
+    command do not cause sideways scrolling.
+  - FE3-U02: the delete box by keyboard, including deleting with Enter.
+- FE3-L01: 20 projects render in 86 ms (limit 200 ms; measured in the test DOM, which is slower than a browser).
+- Screenshots of the list, the form and the delete box were compared with the designs and match.
+- Lint: no problems. Build scan clean. Contract tests: 2 of 2 pass. Backend: 607 of 607 pass. (The container restarted during the first backend run, which then failed with PostgreSQL and Docker down. After they were started again the whole suite was run again and passed.)
+
+Not done here:
+- **Firefox** (FE0-B01 and the later browser checks): installing it failed because this environment's network policy
+  blocks `cdn.playwright.dev` and `playwright.download.prss.microsoft.com` (403). After that host is allowed in the
+  environment's network settings, `npx playwright install firefox` and `E2E_FIREFOX=1 npm run test:e2e` run every
+  browser test in Firefox.
+
+Decisions made where the design docs were silent (please check):
+1. The branch field shows only for GitHub projects: a local folder or a zip has no branch to choose.
+2. When Run is blocked by a run in progress, the reason reads "A run is already in progress"; the "run in progress,
+   open it" banner with the link comes in FE7.
+3. Help text per source type: github "The agent clones the repo for each run." (from the screen); local_path "The
+   agent copies this folder for each run (only when the backend runs on your own machine)."; zip "You upload a .zip
+   of the code with each run."
+4. Saving an edit with no change sends nothing and goes back to the list.
+5. Below 900 px wide the list hides the branch and test-command columns so the actions stay visible.
 
 ---
 

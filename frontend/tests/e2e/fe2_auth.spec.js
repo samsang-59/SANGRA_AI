@@ -36,7 +36,8 @@ test("FE2-U01: register, log out and log in again using only the keyboard", asyn
   await page.keyboard.press("Enter");
   await expect(page.getByRole("heading", { name: "Projects" })).toBeVisible();
   // the reload of /account loads the user once (GET /auth/me)
-  expect(api.calls).toEqual(["POST /auth/register", "GET /auth/me", "POST /auth/login"]);
+  expect(api.calls.filter((c) => c.includes("/auth/"))).toEqual(["POST /auth/register", "GET /auth/me",
+    "POST /auth/login"]);
 });
 
 test("a wrong password shows the message and keeps the user on the page", async ({ page }) => {

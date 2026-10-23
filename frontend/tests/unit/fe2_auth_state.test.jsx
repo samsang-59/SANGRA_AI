@@ -42,7 +42,9 @@ describe("when the app opens", () => {
     expect(screen.getByRole("status", { name: "Loading your account" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "log in" })).not.toBeInTheDocument();
     expect(await screen.findByRole("heading", { name: "Projects" })).toBeInTheDocument();
-    expect(seen.map((r) => new URL(r.url).pathname)).toEqual(["/api/v1/auth/me"]);
+    const paths = seen.map((r) => new URL(r.url).pathname);
+    expect(paths[0]).toBe("/api/v1/auth/me"); // the user first; the page loads its own data after
+    expect(paths.filter((p) => p === "/api/v1/auth/me")).toHaveLength(1);
   });
 
   it("FE2-X01: an expired or invalid saved token -> removed, logged out, no error screen", async () => {

@@ -41,6 +41,7 @@ export function fakeBackend() {
     http.post(api("/auth/resend-verification"), ({ request }) =>
       authed(request) ? HttpResponse.json({ data: { message: "We sent a new verification link." } }) : unauthorized()),
   );
+  server.use(...projectRoutes(state));
   server.events.on("request:start", ({ request }) => seen.push(request.clone()));
   return { server, seen, state };
 }
@@ -56,9 +57,9 @@ export function saveToken(token) {
   window.localStorage.setItem(TOKEN_KEY, token);
 }
 
-export function renderApp(path, { strict = false } = {}) {
+export function renderApp(path, { strict = false, queryClient = createQueryClient() } = {}) {
   const tree = (
-    <QueryClientProvider client={createQueryClient()}>
+    <QueryClientProvider client={queryClient}>
       <MemoryRouter initialEntries={[path]}>
         <AuthProvider>
           <App />
@@ -68,4 +69,52 @@ export function renderApp(path, { strict = false } = {}) {
     </QueryClientProvider>
   );
   return render(strict ? <StrictMode>{tree}</StrictMode> : tree);
+}
+
+/** Projects and runs for the project pages (FE3 on): a small stateful fake of the project routes. */
+export function projectRoutes(state) {
+  state.tokens ??= new Set();
+  state.projects ??= [];
+  state.activeRun ??= null;
+  state.nextId ??= 100;
+  const authed = (request) => state.tokens.has((request.headers.get("authorization") || "").replace("Bearer ", ""));
+  const notFound = () => errorReply(404, "NOT_FOUND", "Not found.");
+  const guard = (handler) => async (info) => (authed(info.request) ? handler(info) : unauthorized());
+  return [
+    http.get(api("/projects"), guard(() => HttpResponse.json({ data: { items: state.projects,
+      total: state.projects.length } }))),
+    http.post(api("/projects"), guard(async ({ request }) => {
+      const body = await request.json();
+      const project = { id: state.nextId++, branch: null, source_reference: null, ...body,
+        created_at: "2026-10-23T10:00:00Z", updated_at: "2026-10-23T10:00:00Z" };
+      state.projects = [project, ...state.projects];
+      return HttpResponse.json({ data: project }, { status: 201 });
+    })),
+    http.get(api("/projects/:id"), guard(({ params }) => {
+      const project = state.projects.find((p) => String(p.id) === params.id);
+      return project ? HttpResponse.json({ data: project }) : notFound();
+    })),
+    http.patch(api("/projects/:id"), guard(async ({ params, request }) => {
+      const project = state.projects.find((p) => String(p.id) === params.id);
+      if (!project) return notFound();
+      Object.assign(project, await request.json());
+      return HttpResponse.json({ data: project });
+    })),
+    http.delete(api("/projects/:id"), guard(({ params }) => {
+      const before = state.projects.length;
+      state.projects = state.projects.filter((p) => String(p.id) !== params.id);
+      return before === state.projects.length ? notFound() : HttpResponse.json({ data: { message: "Deleted." } });
+    })),
+    http.get(api("/runs"), guard(({ request }) => {
+      const status = new URL(request.url).searchParams.get("status");
+      const items = status === "active" && state.activeRun ? [state.activeRun] : [];
+      return HttpResponse.json({ data: { items, total: items.length, page: 1, limit: 20 } });
+    })),
+  ];
+}
+
+export function makeProject(id, overrides = {}) {
+  return { id, name: `project-${id}`, language: "java", source_type: "github",
+    source_reference: `https://github.com/sangram/project-${id}`, branch: null, test_command: "mvn test",
+    created_at: "2026-10-22T10:00:00Z", updated_at: "2026-10-22T10:00:00Z", ...overrides };
 }

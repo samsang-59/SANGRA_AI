@@ -1,8 +1,8 @@
 // A fake backend inside the browser (Playwright routes) for the page tests that do not need the real one.
 export const API = "http://localhost:8000/api/v1";
 
-export async function mockApi(page, { user, token = "aaa.bbb.ccc" } = {}) {
-  const state = { user, token, calls: [] };
+export async function mockApi(page, { user, token = "aaa.bbb.ccc", projects = [], activeRun = null } = {}) {
+  const state = { user, token, calls: [], projects, activeRun };
   await page.route(`${API}/**`, async (route) => {
     const request = route.request();
     const path = new URL(request.url()).pathname.replace("/api/v1", "");
@@ -29,6 +29,22 @@ export async function mockApi(page, { user, token = "aaa.bbb.ccc" } = {}) {
     if (!authed) return json(401, { error: { code: "UNAUTHORIZED", message: "Login required." } });
     if (path === "/auth/me") return json(200, { data: state.user });
     if (path === "/auth/resend-verification") return json(200, { data: { message: "We sent a new verification link." } });
+    if (path === "/projects" && request.method() === "GET") {
+      return json(200, { data: { items: state.projects, total: state.projects.length } });
+    }
+    const one = /^\/projects\/(\d+)$/.exec(path);
+    if (one && request.method() === "GET") {
+      const project = state.projects.find((p) => String(p.id) === one[1]);
+      return project ? json(200, { data: project }) : json(404, { error: { code: "NOT_FOUND", message: "Not found." } });
+    }
+    if (one && request.method() === "DELETE") {
+      state.projects = state.projects.filter((p) => String(p.id) !== one[1]);
+      return json(200, { data: { message: "Deleted." } });
+    }
+    if (path === "/runs") {
+      const items = state.activeRun ? [state.activeRun] : [];
+      return json(200, { data: { items, total: items.length, page: 1, limit: 20 } });
+    }
     return json(404, { error: { code: "NOT_FOUND", message: "Not found." } });
   });
   return state;

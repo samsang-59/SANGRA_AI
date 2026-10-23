@@ -6,6 +6,8 @@ import ForgotPasswordPage from "./pages/ForgotPasswordPage.jsx";
 import LoginPage from "./pages/LoginPage.jsx";
 import NotFoundPage from "./pages/NotFoundPage.jsx";
 import PlannedPage from "./pages/PlannedPage.jsx";
+import ProjectFormPage from "./pages/ProjectFormPage.jsx";
+import ProjectsPage from "./pages/ProjectsPage.jsx";
 import RegisterPage from "./pages/RegisterPage.jsx";
 import ResetPasswordPage from "./pages/ResetPasswordPage.jsx";
 import VerifyEmailPage from "./pages/VerifyEmailPage.jsx";
@@ -27,9 +29,9 @@ export default function App() {
       <Route element={<ProtectedRoute />}>
         <Route element={<Layout />}>
           <Route path="/account" element={<AccountPage />} />
-          <Route path="/projects" element={<PlannedPage title="Projects" phase="FE3" />} />
-          <Route path="/projects/new" element={<PlannedPage title="New project" phase="FE3" />} />
-          <Route path="/projects/:projectId/edit" element={<PlannedPage title="Edit project" phase="FE3" />} />
+          <Route path="/projects" element={<ProjectsPage />} />
+          <Route path="/projects/new" element={<ProjectFormPage />} />
+          <Route path="/projects/:projectId/edit" element={<ProjectFormPage />} />
           <Route path="/projects/:projectId/run" element={<PlannedPage title="Start a run" phase="FE4" />} />
           <Route path="/runs" element={<PlannedPage title="History" phase="FE4" />} />
           <Route path="/runs/:runId" element={<PlannedPage title="Run" phase="FE5" />} />
