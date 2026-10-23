@@ -20,3 +20,7 @@
 ## Environment notes
 - Tests need PostgreSQL: `pg_ctlcluster 16 main start` if it is down (the container may have restarted).
 - Test database: `TEST_DATABASE_URL` (default in `backend/tests/conftest.py`).
+- Docker (from B7): in the cloud container, start the daemon with `dockerd > /tmp/dockerd.log 2>&1 &` if
+  `docker info` fails (the owner's Docker Desktop on their laptop is not reachable from the cloud container).
+  Inside this sandbox, internet from test containers goes through an inspecting proxy whose CA is
+  /root/.ccr/ca-bundle.crt; that is a sandbox detail, not something the app needs on a normal machine.
