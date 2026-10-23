@@ -97,6 +97,16 @@ class Settings(BaseSettings):
     test_container_user: str = Field(default="auto", pattern=r"^(auto|[1-9][0-9]*(:[0-9]+)?)$")
     test_log_excerpt_chars: int = Field(default=8000, gt=0)
 
+    # LLM (Groq): retries with waiting on rate limits, server errors, timeouts and dropped connections
+    # (04_backend_design.md 6.5 item 6: up to 3); the time limit and the reply size per call; the investigate
+    # limit (15 tool calls per pass); the model's context size, used to check the prompts fit.
+    llm_max_retries: int = Field(default=3, ge=0)
+    llm_retry_base_seconds: float = Field(default=1.0, ge=0)
+    llm_timeout_seconds: float = Field(default=60.0, gt=0)
+    llm_max_output_tokens: int = Field(default=8192, gt=0)
+    investigate_max_tool_calls: int = Field(default=15, gt=0)
+    llm_context_tokens: int = Field(default=131_072, gt=0)
+
     # Passwords: bcrypt cost (each +1 doubles the time; 12 is about 0.25 s per hash).
     bcrypt_rounds: int = Field(default=12, ge=4, le=16)
 

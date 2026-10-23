@@ -1,0 +1,25 @@
+Bug report:
+$bug_description
+
+Hints from the user (newest last):
+$hints
+
+Places found in the code:
+$findings
+
+Test run before any change (baseline):
+$baseline_summary
+
+Earlier attempts in this run (do not repeat them):
+$previous_attempts
+
+Feedback from the user on the last proposal:
+$reject_feedback
+
+Test failure after the last applied fix:
+$last_test_failure
+
+Problems found in your last answer (fix them):
+$check_problems
+
+Propose the fix.

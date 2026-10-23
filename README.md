@@ -7,7 +7,7 @@ You describe a bug in plain English. SANGRA_AI searches your code, finds the wro
 it undoes the change and tries again (up to 3 times). Your original code is never touched.
 
 > **Status:** implementation in progress, phase by phase (see [the plan](06_implementation_plan.md) and
-> [Implementation progress](#implementation-progress) below). Current phase: **B7 Docker test runner** (awaiting review).
+> [Implementation progress](#implementation-progress) below). Current phase: **B8 LLM client and prompts** (awaiting review).
 
 ---
 
@@ -151,8 +151,9 @@ A phase is done only when all of its tests pass **and** all earlier tests still 
 | B4 Projects | Done (approved) | 46 of 46 pass |
 | B5 Runs, events, state rules, live stream (fake agent) | Done (approved) | 100 of 100 pass |
 | B6 Workspace manager and the 3 read-only code tools | Done (approved) | 61 of 61 pass |
-| B7 Docker test runner | Built, awaiting review | 24 of 24 pass (450 in total with B0 to B6); B7-M01 is manual (Windows) |
-| B8 to B11, FE0 to FE7 | Not started | |
+| B7 Docker test runner | Done (approved) | 24 of 24 pass; B7-M01 is manual (Windows), not done yet |
+| B8 LLM client and prompts | Built, awaiting review | 29 of 29 pass (479 in total with B0 to B7); B8-M01 and B8-Q01 (real Groq) not run yet, see below |
+| B9 to B11, FE0 to FE7 | Not started | |
 
 ### Running the backend
 
@@ -437,8 +438,8 @@ Decisions made where the design docs were silent (please check):
 4. Search is case-insensitive for English letters (the bytes are lower-cased); non-English letters must match exactly.
    Binary files are recognised by a zero byte in the first 8 KB. Lines in tool answers are cut at 300 characters.
 5. Every tool answer is capped at 16,000 characters (setting `TOOL_OUTPUT_MAX_CHARS`). 200 lines of typical code fit;
-   200 lines of 100 characters do not, and the answer is cut from the end with `truncated: true`. The final number is
-   checked against the model's context in B8 (B8-X08).
+   200 lines of 100 characters do not, and the answer is cut from the end with `truncated: true`. B8-X08 confirmed
+   that 15 answers at this cap fit the model's context.
 6. Decided after review: when EVERY file of a zip sits inside one single top folder (as in GitHub's "Download ZIP",
    for example `repo-main/`), that folder is removed while unpacking, so the test command runs in the project root.
    A zip with files at the top, or with several top folders, is unpacked as it is.
@@ -488,6 +489,48 @@ Decisions made where the design docs were silent (please check):
 5. Internet is allowed inside test containers (MVP, as designed).
 6. In the cloud sandbox where this is developed, the network inspects TLS, so the TEST SUITE hands the sandbox's
    certificate to the test containers (`sandbox_network_extras()` in `tests/conftest.py`). The app does not do this.
+
+### B8: LLM client and prompts (notes)
+
+Built (in `app/agent/llm/`):
+- `client.py`: `GroqChatModel` (the Groq SDK; a client is built from the settings for each call) and `LLMClient`
+  (retries rate limits, server errors, timeouts and dropped connections up to 3 times, waiting 1 s, 2 s, 4 s; then
+  `LLMError`, which ends a run as `llm_error`; a wrong API key or a refused request is not retried). It adds up the
+  tokens. Logs hold only metadata: never prompts, replies, code or the API key.
+- `prompts/`: the prompts as plain text files (`investigate_system`, `investigate_user`, `propose_system`,
+  `propose_user`), filled in with `string.Template`. They tell the model that the bug text, hints and code are data,
+  not instructions.
+- `investigation.py`: the investigate loop. The model may call only `search_files`, `search_in_file` and
+  `read_file_lines`, at most 15 times per pass. Any other tool or bad arguments get an error back and the loop goes on.
+  The model ends with a fixed JSON answer (`found` / `not_found` with the places). Each place is checked against the
+  real file and its current lines are attached. Only this compact result is kept (the chat is not).
+- `proposal.py` and `parsing.py`: propose_fix (one call, no tools) and the parser of the fixed answer format
+  (explanation + edits: file, line range, old_code, new_code, reason). An answer that cannot be read gets one more
+  try with the reason; after that it is a failed proposal, never a crash. The parser checks only the shape; whether
+  the edits match the files is checked in B9.
+
+Test results: `tests/test_b8_llm.py`, 29 tests, all pass, using a scripted FakeLLM and a local fake Groq server that
+answers with real HTTP errors (429, 500, 401, a dropped connection, no answer at all) to the real Groq SDK. Numbers:
+with 15 tool answers at the size cap, the largest investigation prompt is about 89,000 tokens, below the 122,880
+tokens left before the reply (B8-X08); 20 parallel LLM calls of 0.2 s each finish in under 0.6 s (B8-C01).
+
+**Not run yet (manual, [M]):** B8-M01 (three real Groq calls on the Amazon discount example) and B8-Q01 (the quality
+benchmark on 10 seeded bugs). This cloud environment's network policy blocks `api.groq.com`, and they also need a
+Groq API key. To run them here: allow `api.groq.com` in the environment's Network access settings and provide the key
+as an environment secret (`GROQ_API_KEY`); or run them on your own machine.
+
+Decisions made where the design docs were silent (please check):
+1. The investigation ends with a fixed JSON answer (`outcome`, `findings`, `summary`; at most 5 places of at most 60
+   lines). When the 15 tool calls are used up, the model gets one last call without tools to give that answer; if it
+   cannot, the outcome is `not_found`. A `found` answer whose places do not exist counts as `not_found`.
+2. An answer with a little text or a ```json fence around the JSON is accepted. An answer without readable JSON
+   (a refusal, prose in another language) is a failed proposal.
+3. Settings: replies are at most 8,192 tokens, a call may take at most 60 s, and the model's context is taken as
+   131,072 tokens (`LLM_CONTEXT_TOKENS`). **That context size could not be checked against Groq's documentation from
+   here (blocked).**
+4. Token counting for B8-X08 uses a cautious estimate (3 characters per token) because the tokenizer files cannot be
+   downloaded from this environment. Real counts come from Groq's own `usage` numbers at run time.
+5. The tool answer size cap stays at 16,000 characters (the open question from B6): 15 answers at the cap fit.
 
 ---
 
