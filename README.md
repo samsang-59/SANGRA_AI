@@ -7,7 +7,7 @@ You describe a bug in plain English. SANGRA_AI searches your code, finds the wro
 it undoes the change and tries again (up to 3 times). Your original code is never touched.
 
 > **Status:** implementation in progress, phase by phase (see [the plan](06_implementation_plan.md) and
-> [Implementation progress](#implementation-progress) below). Current phase: **B6 Workspace manager and code tools** (awaiting review).
+> [Implementation progress](#implementation-progress) below). Current phase: **B7 Docker test runner** (awaiting review).
 
 ---
 
@@ -150,8 +150,9 @@ A phase is done only when all of its tests pass **and** all earlier tests still 
 | B3 Auth feature (8 routes) | Done (approved) | 48 of 48 pass |
 | B4 Projects | Done (approved) | 46 of 46 pass |
 | B5 Runs, events, state rules, live stream (fake agent) | Done (approved) | 100 of 100 pass |
-| B6 Workspace manager and the 3 read-only code tools | Built, awaiting review | 59 of 59 pass (424 in total with B0 to B5) |
-| B7 to B11, FE0 to FE7 | Not started | |
+| B6 Workspace manager and the 3 read-only code tools | Done (approved) | 61 of 61 pass |
+| B7 Docker test runner | Built, awaiting review | 24 of 24 pass (450 in total with B0 to B6); B7-M01 is manual (Windows) |
+| B8 to B11, FE0 to FE7 | Not started | |
 
 ### Running the backend
 
@@ -372,7 +373,7 @@ Test results: `tests/test_b5_runs.py` and `tests/test_b5_stream_jobs.py`, 100 te
 and the pool needed 5 connections (B5-L02); 100 waiting streams cause about 100 database queries per second, one per stream
 per check (B5-L03); a replay of 5,000 events takes 0.5 s (B5-L04); 20 runs started at once all ran in parallel (B5-L05);
 100 runs in a row left no tasks behind (B5-L06); about 1,800 events per second can be saved (B5-L07); a history page of a
-user with 5,000 runs takes p95 10 ms (B5-L08). B5-L09 (a stream open 30 minutes with only pings): see below.
+user with 5,000 runs takes p95 10 ms (B5-L08). B5-L09: a stream held open for the full 30 minutes with only pings stayed open, and the server's memory changed by 47 KB (run once with `SANGRA_SOAK_SECONDS=1800`).
 
 Decisions made where the design docs were silent (please check):
 1. Starting a run takes JSON `{ "bug_description" }`, or, for zip projects, `multipart/form-data` with the fields
@@ -421,7 +422,7 @@ Safety (Gaps #5 and #6 are implemented):
 - The path guard refuses `..` (also `%2e%2e`), absolute and drive paths, `\`, null bytes, very long paths, anything
   inside `.git/`, and symlinks that lead out of `code/`.
 
-Test results: `tests/test_b6_workspace.py`, 59 tests, all pass (the clone tests use the tiny public repo
+Test results: `tests/test_b6_workspace.py`, 61 tests, all pass (the clone tests use the tiny public repo
 `octocat/Hello-World`, so they need internet). Numbers: `search_files` over 50,000 files 0.7 to 0.9 s (B6-L01);
 200 lines of a 1 MB file in under 9 ms (B6-L02); 10 parallel copies of a 100 MB folder in 12 to 15 s using about 2 GB
 (copy + git objects), all of it freed again after delete (B6-L03).
@@ -438,11 +439,55 @@ Decisions made where the design docs were silent (please check):
 5. Every tool answer is capped at 16,000 characters (setting `TOOL_OUTPUT_MAX_CHARS`). 200 lines of typical code fit;
    200 lines of 100 characters do not, and the answer is cut from the end with `truncated: true`. The final number is
    checked against the model's context in B8 (B8-X08).
-6. **Open question:** a zip is unpacked exactly as it is. A zip downloaded from GitHub ("Download ZIP") has one top folder
-   (for example `repo-main/`), so the test command would run one level too high. Should a single top folder be removed
-   when unpacking? (Not done; the design does not say.)
+6. Decided after review: when EVERY file of a zip sits inside one single top folder (as in GitHub's "Download ZIP",
+   for example `repo-main/`), that folder is removed while unpacking, so the test command runs in the project root.
+   A zip with files at the top, or with several top folders, is unpacked as it is.
 7. B6-X05 "not readable" and B6-X15 "locked file": the tests run as root, so "not readable" is simulated, and the locked
    file uses `chattr +i` (Linux).
+
+### B7: Docker test runner (notes)
+
+Built: `app/runners/test_runner.py`. One container per test run, with only the run's `code/` folder mounted (at
+`/workspace`) plus a dependency cache volume (at `/cache`), labelled with the run id. The test command runs with
+`sh -c` inside the container. Limits: 10 minutes, 2 CPUs, 2 GB memory, 512 processes, 1 MB of output. No Linux
+capabilities, `no-new-privileges`, and never root. Nothing from the backend's environment is passed in. At most 2 test
+containers run at the same moment (Gaps #8; more wait their turn). At startup, containers left over after a crash are
+removed (Gaps #7). The full log is saved to `artifacts/`; the last 8,000 characters are kept as the excerpt.
+
+| What happened | Result |
+|---|---|
+| exit code 0 | `passed` |
+| any other exit code (failing tests, compile error) | `failed` |
+| exit code 126 or 127 (the test command was not found or cannot run) | `error` |
+| killed for using too much memory, or for printing more than 1 MB | `failed`, with a note |
+| over the time limit | `timed_out` (the container is killed and removed) |
+| Docker not running, image missing and not pullable, Docker failing during the run | `error`, with a clear note |
+
+Test results: `tests/test_b7_test_runner.py`, 24 tests against the real Docker engine, all pass. Numbers on this machine:
+a Maven project with JUnit 5 takes 11.5 to 12 s with an empty dependency cache and 3.9 to 4 s with a warm one (B7-L02);
+10 pytest runs with at most 3 at once took 12 s (B7-L01); when Docker was stopped in the middle of a test the runner
+answered `error` after 12.6 s and nothing hung (B7-R02); 1 GB of output was cut at 1 MB while the backend held only a few
+MB (B7-X06). B7-M01 (Docker Desktop on Windows with a OneDrive folder) needs a real Windows machine: still to be done by hand.
+
+Fixed during this phase: B7-R02 found that when Docker disappears in the middle of a test, removing the container could
+raise an error and the runner crashed instead of answering `error`. Cleaning up can no longer raise.
+Note: one full run had a single B7-C02 failure that did not come back in 4 further full runs (it came right after a run
+in which Docker had been restarted and 11 crash leftovers were present). The test now prints every outcome if it fails.
+
+Decisions made where the design docs were silent (please check):
+1. Images: `maven:3.9-eclipse-temurin-17` for Java and `python:3.12-slim` for Python (settings). The Python image has no
+   pytest, so a Python project's test command installs what it needs, for example
+   `pip install -q -r requirements.txt && python -m pytest -q` (pip installs into the cache volume as the container user).
+2. Dependency cache: a Docker volume mounted as the container's home (`/cache`): one per language in local mode, one per
+   user and language in deployed mode (so one user's build cannot poison another's, design 6.7). The first use gives the
+   new volume to the container user.
+3. Container user (Gaps #9): the backend's own user id, so the files the tests create stay removable by the backend; when
+   the backend runs as root, user 1000 is used and the run's copy is opened for writing. Root is never used. No exceptions
+   were needed for Maven or pip.
+4. Using too much memory or printing more than 1 MB counts as `failed` (the code under test did it), with a note.
+5. Internet is allowed inside test containers (MVP, as designed).
+6. In the cloud sandbox where this is developed, the network inspects TLS, so the TEST SUITE hands the sandbox's
+   certificate to the test containers (`sandbox_network_extras()` in `tests/conftest.py`). The app does not do this.
 
 ---
 

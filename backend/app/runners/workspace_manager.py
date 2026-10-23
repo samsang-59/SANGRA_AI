@@ -264,8 +264,10 @@ class WorkspaceManager:
                     raise WorkspaceError("clone_failed", f"The zip unpacks to more than {_mb(self.settings.workspace_max_bytes)}.")
                 code_dir.mkdir(parents=True)
                 written = 0
+                prefix = _single_top_folder(kept)
                 for entry in kept:
-                    target = code_dir / entry.filename.replace("\\", "/")
+                    relative = entry.filename.replace("\\", "/")
+                    target = code_dir / (relative[len(prefix):] if prefix else relative)
                     if not target.resolve().is_relative_to(code_dir.resolve()):
                         raise WorkspaceError("clone_failed", "The zip contains a path that leads outside the folder.")
                     target.parent.mkdir(parents=True, exist_ok=True)
@@ -350,6 +352,21 @@ def _check_zip_entry(entry: zipfile.ZipInfo) -> None:
         raise WorkspaceError("clone_failed", "The zip contains a symbolic link, which is not allowed.")
     if entry.flag_bits & 0x1:
         raise WorkspaceError("clone_failed", "The zip is password protected.")
+
+
+def _single_top_folder(entries: list[zipfile.ZipInfo]) -> str:
+    """A zip made by GitHub's "Download ZIP" puts everything in one top folder (for example repo-main/). When
+    EVERY file sits inside the same single top folder, that folder is removed while unpacking, so the test
+    command runs in the project's root. Returns the prefix to remove ("repo-main/"), or "" to keep the paths."""
+    tops = set()
+    for entry in entries:
+        parts = PurePosixPath(entry.filename.replace("\\", "/")).parts
+        if len(parts) < 2:
+            return ""  # a file at the top: the zip already starts at the project root
+        tops.add(parts[0])
+        if len(tops) > 1:
+            return ""
+    return f"{tops.pop()}/" if tops else ""
 
 
 def _folder_size(path: Path) -> int:

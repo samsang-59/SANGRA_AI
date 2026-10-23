@@ -82,6 +82,21 @@ class Settings(BaseSettings):
     file_read_cap_bytes: int = Field(default=1024 * 1024, gt=0)
     tool_output_max_chars: int = Field(default=16_000, gt=0)
 
+    # Test runner (Docker): one image per language; limits per test run (04_backend_design.md 6.6: 10 minutes,
+    # 2 CPUs, 2 GB memory, 1 MB output); a process limit (fork bombs); at most this many test containers at once
+    # (Gaps #8); the container user ("auto" = the backend's own user id, or 1000 when the backend runs as root;
+    # never root, Gaps #9); how much of the end of the log is kept in the database.
+    test_image_java: str = Field(default="maven:3.9-eclipse-temurin-17", min_length=1)
+    test_image_python: str = Field(default="python:3.12-slim", min_length=1)
+    test_timeout_seconds: float = Field(default=600.0, gt=0)
+    test_cpus: float = Field(default=2.0, gt=0)
+    test_memory_mb: int = Field(default=2048, gt=0)
+    test_output_max_bytes: int = Field(default=1024 * 1024, gt=0)
+    test_pids_limit: int = Field(default=512, gt=0)
+    max_parallel_test_containers: int = Field(default=2, gt=0)
+    test_container_user: str = Field(default="auto", pattern=r"^(auto|[1-9][0-9]*(:[0-9]+)?)$")
+    test_log_excerpt_chars: int = Field(default=8000, gt=0)
+
     # Passwords: bcrypt cost (each +1 doubles the time; 12 is about 0.25 s per hash).
     bcrypt_rounds: int = Field(default=12, ge=4, le=16)
 

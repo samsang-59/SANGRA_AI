@@ -116,6 +116,35 @@ def test_B6_F04_zip_unpack(manager, tmp_path):
     assert git(workspace.code_dir, "status", "--porcelain") == "" and len(workspace.base_commit) == 40
 
 
+def test_B6_F04_github_download_zip_loses_its_single_top_folder(manager, tmp_path):
+    # Decided after review: GitHub's "Download ZIP" puts everything in one top folder (shop-main/).
+    source = make_project(tmp_path / "shop")
+    with zipfile.ZipFile(tmp_path / "github.zip", "w") as archive:
+        archive.writestr("shop-main/", "")
+        for path in sorted(source.rglob("*")):
+            if path.is_file():
+                archive.write(path, "shop-main/" + path.relative_to(source).as_posix())
+    put_zip(manager, 1, 12, tmp_path / "github.zip")
+    code = manager.prepare(1, 12, "zip", None, None).code_dir
+    assert (code / "src/main/java/shop/Discount.java").read_text() == JAVA and (code / "config.yml").exists()
+    assert not (code / "shop-main").exists()
+
+
+def test_B6_F04_zip_paths_stay_when_there_is_no_single_top_folder(manager, tmp_path):
+    with zipfile.ZipFile(tmp_path / "two_tops.zip", "w") as archive:
+        archive.writestr("src/A.java", "class A {}")
+        archive.writestr("test/ATest.java", "class ATest {}")
+    put_zip(manager, 1, 13, tmp_path / "two_tops.zip")
+    code = manager.prepare(1, 13, "zip", None, None).code_dir
+    assert (code / "src/A.java").exists() and (code / "test/ATest.java").exists()
+    with zipfile.ZipFile(tmp_path / "root_file.zip", "w") as archive:
+        archive.writestr("pom.xml", "<project/>")
+        archive.writestr("src/A.java", "class A {}")
+    put_zip(manager, 1, 14, tmp_path / "root_file.zip")
+    code = manager.prepare(1, 14, "zip", None, None).code_dir
+    assert (code / "pom.xml").exists() and (code / "src/A.java").exists()
+
+
 def test_B6_F05_edit_then_undo_restores_byte_for_byte(manager, tmp_path):
     workspace = manager.prepare(1, 5, "local_path", str(make_project(tmp_path / "shop")), None)
     code = workspace.code_dir

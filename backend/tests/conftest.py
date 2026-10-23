@@ -331,3 +331,29 @@ def url_through_proxy(url: str, port: int) -> str:
     parts = urlsplit(url)
     credentials = parts.netloc.rsplit("@", 1)[0]
     return urlunsplit(parts._replace(netloc=f"{credentials}@127.0.0.1:{port}"))
+
+
+def sandbox_network_extras() -> tuple[dict[str, str], dict[str, str]]:
+    """Only on a machine whose network inspects TLS with its own certificate (this cloud sandbox): hands that
+    certificate to the test containers so Maven and pip can download. On a normal machine: nothing."""
+    ca = Path("/root/.ccr/ca-bundle.crt")
+    java_store = Path("/etc/ssl/certs/java/cacerts")
+    env: dict[str, str] = {}
+    mounts: dict[str, str] = {}
+    if ca.exists():
+        mounts[str(ca)] = "/etc/sangra-ca.crt"
+        env.update({"SSL_CERT_FILE": "/etc/sangra-ca.crt", "PIP_CERT": "/etc/sangra-ca.crt",
+                    "REQUESTS_CA_BUNDLE": "/etc/sangra-ca.crt"})
+        if java_store.exists():
+            mounts[str(java_store)] = "/etc/sangra-java-cacerts"
+            env["MAVEN_OPTS"] = ("-Djavax.net.ssl.trustStore=/etc/sangra-java-cacerts "
+                                 "-Djavax.net.ssl.trustStorePassword=changeit")
+    return env, mounts
+
+
+@pytest.fixture
+def docker_runner(settings):
+    from app.runners.test_runner import TestRunner
+
+    env, mounts = sandbox_network_extras()
+    return TestRunner(settings, extra_env=env, extra_mounts=mounts, cache_prefix="sangra-test-cache")
