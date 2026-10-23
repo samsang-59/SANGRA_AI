@@ -3,7 +3,9 @@
 from typing import Annotated, Literal
 
 from fastapi import Query
-from pydantic import BaseModel, StringConstraints, model_validator
+from pydantic import StringConstraints, model_validator
+
+from app.validators.common import RequestModel
 
 BugDescription = Annotated[str, StringConstraints(strip_whitespace=True, min_length=10, max_length=2000)]
 Feedback = Annotated[str, StringConstraints(strip_whitespace=True, min_length=3, max_length=2000)]
@@ -17,11 +19,11 @@ StatusFilter = Literal[
 MAX_ID = 2**63 - 1
 
 
-class StartRunRequest(BaseModel):
+class StartRunRequest(RequestModel):
     bug_description: BugDescription
 
 
-class RunListQuery(BaseModel):
+class RunListQuery(RequestModel):
     project_id: int | None = None
     status: StatusFilter | None = None
     page: int = 1
@@ -37,7 +39,7 @@ def run_list_query(
     return RunListQuery(project_id=project_id, status=status, page=page, limit=limit)
 
 
-class ApprovalRequest(BaseModel):
+class ApprovalRequest(RequestModel):
     attempt_id: int
     decision: Literal["accepted", "rejected"]
     feedback: str | None = None
@@ -56,5 +58,5 @@ class ApprovalRequest(BaseModel):
         return self
 
 
-class HintRequest(BaseModel):
+class HintRequest(RequestModel):
     text: HintText

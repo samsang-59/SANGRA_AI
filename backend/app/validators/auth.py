@@ -2,10 +2,10 @@
 
 from typing import Annotated
 
-from pydantic import AfterValidator, BaseModel, EmailStr, StringConstraints
+from pydantic import AfterValidator, EmailStr, StringConstraints
 
 from app.core.security import EMAIL_TOKEN_LENGTH
-from app.validators.common import LoginPassword, NewPassword
+from app.validators.common import LoginPassword, NewPassword, RequestModel
 
 # Valid email, then stored and compared lowercase.
 Email = Annotated[EmailStr, AfterValidator(lambda value: value.lower())]
@@ -17,30 +17,30 @@ EmailToken = Annotated[
 ]
 
 
-class RegisterRequest(BaseModel):
+class RegisterRequest(RequestModel):
     name: Name
     email: Email
     password: NewPassword
 
 
-class LoginRequest(BaseModel):
+class LoginRequest(RequestModel):
     email: Email
     password: LoginPassword
 
 
-class VerifyEmailRequest(BaseModel):
+class VerifyEmailRequest(RequestModel):
     token: EmailToken
 
 
-class ForgotPasswordRequest(BaseModel):
+class ForgotPasswordRequest(RequestModel):
     email: Email
 
 
-class ResetPasswordRequest(BaseModel):
+class ResetPasswordRequest(RequestModel):
     token: EmailToken
     new_password: NewPassword
 
 
-class ChangePasswordRequest(BaseModel):
+class ChangePasswordRequest(RequestModel):
     old_password: LoginPassword
     new_password: NewPassword

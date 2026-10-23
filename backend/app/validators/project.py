@@ -3,8 +3,9 @@
 from typing import Annotated, Literal
 
 from fastapi import Path
-from pydantic import AfterValidator, BaseModel, BeforeValidator, StringConstraints, model_validator
+from pydantic import AfterValidator, BeforeValidator, StringConstraints, model_validator
 
+from app.validators.common import RequestModel
 from app.validators.project_rules import check_branch, check_reference
 
 ProjectName = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)]
@@ -27,7 +28,7 @@ Reference = Annotated[str | None, BeforeValidator(_empty_to_none)]
 EntityId = Annotated[int, Path(gt=0, le=2**63 - 1)]
 
 
-class ProjectCreateRequest(BaseModel):
+class ProjectCreateRequest(RequestModel):
     name: ProjectName
     language: Language
     source_type: SourceType
@@ -45,7 +46,7 @@ class ProjectCreateRequest(BaseModel):
         return self
 
 
-class ProjectUpdateRequest(BaseModel):
+class ProjectUpdateRequest(RequestModel):
     """PATCH: only the fields sent are changed. Fields that are not editable (id, user_id, created_at) are
     ignored. Whether the merged project still makes sense is the service's job (INVALID_PROJECT_CONFIG)."""
 

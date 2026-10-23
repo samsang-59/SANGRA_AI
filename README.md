@@ -7,7 +7,7 @@ You describe a bug in plain English. SANGRA_AI searches your code, finds the wro
 it undoes the change and tries again (up to 3 times). Your original code is never touched.
 
 > **Status:** implementation in progress, phase by phase (see [the plan](06_implementation_plan.md) and
-> [Implementation progress](#implementation-progress) below). Current phase: **B10 Finish, package, download, apply to my folder, cleanup** (awaiting review).
+> [Implementation progress](#implementation-progress) below). Current phase: **B11 End to end, security sweep, soak and chaos tests** (awaiting review). The backend is complete; the frontend (FE0 to FE7) comes next.
 
 ---
 
@@ -154,8 +154,33 @@ A phase is done only when all of its tests pass **and** all earlier tests still 
 | B7 Docker test runner | Done (approved) | 24 of 24 pass; B7-M01 is manual (Windows), not done yet |
 | B8 LLM client and prompts | Done (approved) | 29 of 29 pass; B8-M01 and B8-Q01 (real Groq) not run yet |
 | B9 The LangGraph agent (11 steps, pause and resume, limits) | Done (approved) | 62 of 62 pass (541 in total with B0 to B8); B9-E01 (real Groq) not run yet |
-| B10 Finish, package, download, apply to my folder, cleanup | Built, awaiting review | 36 of 36 pass (577 in total with B0 to B9) |
-| B11, FE0 to FE7 | Not started | |
+| B10 Finish, package, download, apply to my folder, cleanup | Done (approved) | 36 of 36 pass (577 in total with B0 to B9) |
+| B11 End to end, security sweep, soak and chaos tests | Built, awaiting review | 30 of 30 pass (607 in total with B0 to B10); B11-E01 to E07 with the real Groq not run yet |
+| FE0 to FE7 | Not started | |
+
+### Open items (manual checks still to do)
+
+These checks cannot be run from the cloud container where the backend is built. None of them blocks the next phase.
+
+| ID | What it is, in simple words | Why it is still open | What is needed |
+|---|---|---|---|
+| B7-M01 | On a Windows laptop with Docker Desktop, run the tests of a project stored in the OneDrive Desktop folder. | The build machine is Linux, so Windows cannot be tried there. Docker Desktop on Windows sometimes cannot share folders inside OneDrive. | On your laptop: create a "local folder" project pointing to a folder on the OneDrive Desktop, start a run, check that the tests run. |
+| B8-M01 | Three real calls to the AI model (Groq) on the discount example (5% instead of 10%): find the bug, propose a fix, read the answer. Record the time and the tokens used. | Every test so far uses a fake AI with scripted answers. The cloud container's network blocks `api.groq.com` and has no Groq key. | Option (a) or (b) below. |
+| B8-Q01 | Quality check of the AI: 10 small projects with one planted bug each (5 Java, 5 Python). Record whether the AI finds the right file and line and gives a valid, correct fix. Not an all-pass test (the AI is not deterministic). Bar: at least 5 of 10 valid fixes, otherwise change the model or the prompts first. | Same as B8-M01. | Option (a) or (b) below. |
+| B9-E01 | One complete run with everything real: real Groq, real Docker, the discount example. You approve the fix, the tests pass, the run succeeds. Time and tokens recorded. | Same as B8-M01. Every other part of this flow is already tested with fakes. | Option (a) or (b) below. |
+
+Two ways to unblock B8-M01, B8-Q01 and B9-E01:
+- (a) In the cloud: in the claude.ai environment settings, allow `api.groq.com` in the network settings and add the
+  Groq key as a secret named `GROQ_API_KEY`. Then the checks can be run there.
+- (b) On your own machine, once the backend is finished: put `GROQ_API_KEY` in `backend/.env`, start the backend and
+  Docker Desktop, and run the checks by hand (step-by-step instructions to be added).
+
+B11-E01 to B11-E07 (the full journeys) are also manual checks with the real Groq. They were run automatically
+with everything real except the model (a scripted fake); see the B11 notes. With the real Groq they are part of
+option (a) or (b) above.
+
+New work is pushed to the branch `claude/optimistic-rubin-i5mzzg` and merged into `main` by pull request. If `main`
+does not show the latest phase yet, check out that branch (`git checkout claude/optimistic-rubin-i5mzzg`).
 
 ### Running the backend
 
@@ -178,6 +203,12 @@ createdb sangra_test   # owned by a role that can log in with a password
 export TEST_DATABASE_URL=postgresql://<user>:<password>@localhost:5432/sangra_test
 cd backend && .venv/bin/pytest -q
 ```
+
+Some tests need Docker running (the real test runner, B7 and B11) and use the `maven:3.9-eclipse-temurin-17` and
+`python:3.12-slim` images. `pytest -q -m "not slow"` skips the slow ones. The B11 load, soak and limit tests run a
+short version by default; `SANGRA_LONG_TESTS=1 .venv/bin/pytest -q tests/test_b11_load.py tests/test_b11_deploy.py`
+runs the full lengths of the plan (10 minutes of load, 30 minutes of soak, a fresh virtual environment for D01).
+The dependency audit (B11-S05) needs `pip install pip-audit`.
 
 ### B0: Foundation (notes)
 
@@ -642,7 +673,7 @@ Fixed during this phase (found by the tests):
    also built in a small pool of their own (2 threads), so many runs finishing at once wait their turn instead of
    filling the shared thread pool.
 
-Decisions made where the design docs were silent (please check):
+Decisions made where the design docs were silent (agreed by the owner):
 1. Package files are stored at `PACKAGES_DIR/<user_id>/run_<run_id>.zip`; the download name is `sangra-run-<id>.zip`.
 2. A normal finish builds the package before the final status is saved (as 6.4 step 11 lists it); a cancel saves the
    final status first (as `cancel_run` lists it).
@@ -658,6 +689,127 @@ Decisions made where the design docs were silent (please check):
    (so a package being built is never taken); email tokens removed 24 hours after they expired
    (`TOKEN_RETENTION_HOURS`); batches of 500 (`CLEANUP_BATCH_SIZE`). The run detail shows a package as not available
    once it is expired, even before the cleanup job has deleted it.
+
+### B11: End to end, security sweep, soak and chaos tests (notes)
+
+Nothing new was built in this phase except fixes (below) and this README. New test files: `tests/test_b11_e2e.py`,
+`test_b11_security.py`, `test_b11_chaos.py`, `test_b11_load.py` and `test_b11_deploy.py`.
+All 30 B11 tests pass; the full suite passes 607 of 607 (B0 to B11), and the full-length load tests pass too.
+
+**Journeys (E01 to E07).** The plan marks these manual with the real Groq, which cannot be reached from the build
+machine. They run automatically through the HTTP API with everything real except the model (a scripted fake): routes,
+database, the LangGraph agent with its Postgres checkpointer, the workspace manager, and, for E01, E02 and E07, the
+real Docker test runner.
+- **E01:** a Java zip project (the Amazon discount example): register, verify by the emailed link, log in, create
+  the project, upload the zip, approve, success (baseline failed, after the fix passed), download the package, read
+  the live stream (16 events, numbered 1..16).
+- **E02:** a Python project with real Docker. It uses a local folder, then "Apply to my folder". There is no public
+  GitHub repo with this seeded bug; cloning public GitHub repos is proven in B6. The GitHub variant stays manual.
+- **E03:** reject with feedback, then accept. The feedback reaches the model.
+- **E04:** nothing found, then a hint, then success.
+- **E05:** a bug that cannot be fixed, three ways: tests fail 3 times, 3 rejects, 3 hints without a match. Each
+  ends inside the limits. The scripted runs used 5, 5 and 8 model calls (500 to 800 tokens). With the real model the
+  hard caps bound the cost: at most 15 tool calls per search, at most 4 searches (the first and 3 hints), and at most
+  3 proposals that fail or are rejected.
+- **E06:** cancel while searching, waiting for a hint, waiting for approval, during the baseline tests and during the
+  tests after the fix. Each time: status `stopped`, one package, nothing left behind (no folder, no LangGraph rows,
+  no running task), the user's folder untouched.
+- **E07:** server restart while waiting for approval, approve after the restart, the run succeeds with real Docker.
+
+**Security sweep (S01 to S07).**
+- **S01:** all 24 routes are read from the app's own route table. The 18 protected ones answer 401 without a JWT,
+  with a broken one and with "Basic"; the 6 public ones never do.
+- **S02:** all 12 routes with an ID, called by user B with user A's IDs, answer 404. Each answer is identical to the
+  one for an ID that does not exist, and A's data is unchanged.
+- **S03:** 396 requests with 18 nasty values in every text field and query: SQL, script, template, 10,000
+  characters, Unicode and right-to-left marks, null bytes, shell syntax. No 500, no internal detail; odd names are
+  stored exactly as sent.
+- **S04:** every response, every log line and every row of every table (LangGraph's included) after a full journey:
+  no secret and no raw email token anywhere.
+- **S05:** pip-audit: 59 runtime packages and 65 with the test tools, no known vulnerabilities.
+- **S06:** the rate limits answer 429 at the 11th login, 6th register, 4th forgot-password, 2nd resend within
+  60 s and 6th change-password, with `Retry-After`.
+- **S07:** a 51 MB upload is refused before a run is created. A zip with 100,000 files (9.3 MB) and a zip bomb
+  (597 KB that unpacks to 600 MB) are refused while unpacking: the run fails with `clone_failed` and a clear
+  message, and nothing is left on disk.
+
+**Load (L01 to L03), full lengths** (`SANGRA_LONG_TESTS=1`; one server process on this machine):
+- **L01:** 50 users for 10 minutes, mixed actions with 0.2 to 1 s of thinking time between clicks: 41,657 requests,
+  0 errors.
+
+  | Action | Calls | p50 | p95 |
+  |---|---|---|---|
+  | List projects | 12,251 | 5 ms | 10 ms |
+  | List runs | 12,655 | 6 ms | 12 ms |
+  | Run detail | 10,517 | 8 ms | 16 ms |
+  | Login (real bcrypt cost 12) | 2,125 | 287 ms | 323 ms |
+  | Live stream of a finished run | 4,109 | 1,009 ms | 1,017 ms |
+
+  The stream stays open until the server's next check sees the run is finished (`STREAM_POLL_SECONDS`, 1 s), so
+  it is not counted as a "normal route". All 50 users come from one address (this machine), so the per-address
+  login limit was raised for this test; the per-email limit stayed.
+- **L02:** 10 users ran 10,246 scripted runs in 30 minutes. No run was stuck. Tasks (12 when idle), threads (9 to
+  11), open files (21 to 27), database connections (10) and work folders (0 when idle) did not grow. Memory went from
+  121 MB to 143 MB (about 2.5 KB per run). That growth was the fake model and fake test runner keeping a record of
+  every call (test bookkeeping). With those records cleared, a 10-minute soak (3,267 runs) stayed flat: 115.8 MB to
+  116.3 MB, +0.3 MB over the last 2,641 runs.
+- **L03:** runs in parallel in one process (fake model 0.2 s per call, fake tests 0.2 s), doubled each step.
+  Nothing broke up to 320 runs at once.
+
+  | Runs at once | All finished in | Worst event-loop delay | Slowest run detail | Memory |
+  |---|---|---|---|---|
+  | 10 | 2.6 s | 10 ms | 35 ms | 144 MB |
+  | 20 | 3.8 s | 16 ms | 21 ms | 145 MB |
+  | 40 | 6.8 s | 24 ms | 29 ms | 147 MB |
+  | 80 | 13.3 s | 51 ms | 28 ms | 151 MB |
+  | 160 | 27.9 s | 114 ms | 33 ms | 162 MB |
+  | 320 | 55.2 s | 182 ms | 180 ms | 182 MB |
+
+  So the backend itself is not the limit. With real tests the limit is Docker: at most
+  `MAX_PARALLEL_TEST_CONTAINERS` (2 by default) test containers run at once and the others wait their turn. On this
+  machine a Maven test run takes 5 to 15 s and a Python one 3 to 10 s. With real Groq, its rate limits per key decide
+  how many runs can search at the same time.
+
+**Chaos (R01 to R05).**
+- **R01:** PostgreSQL was stopped for 60 s in the middle of 5 runs. While it was down, `/health` answered 503 and
+  other routes 500, all in our error shape, none slower than 2 s. The app was healthy 0.4 s after the database came
+  back. All 5 runs ended as `failed` (`internal_error`), and a new run worked normally.
+- **R02:** Docker was stopped while the tests after a fix were running. The run ended 0.2 s later as `failed`
+  (`test_runner_error`) with an error event, and the copy was deleted.
+- **R03:** the workspace disk was full (a 3 MB disk, an 8 MB project). The run failed in 0.1 s with `clone_failed`
+  ("No space left on device"). The half copy was removed, and the next run worked.
+- **R04:** Groq could not be reached. The client tried 4 times, then the run failed with `llm_error` (4 s with a
+  0.5 s retry base; about 7 s with the default 1 s). The user sees "The AI service did not answer after 4 tries" and
+  "The run failed. The AI service did not answer." A 2-minute outage therefore fails the run rather than waiting.
+- **R05:** the email service was down (SMTP refused). Register still answered 201 with a JWT, forgot-password still
+  answered 200 with the same answer as for an unknown email, and each failed email was logged.
+
+**Fresh machine (D01, D02).**
+- **D01:** the test reads the commands of "Running the backend" from this README and follows them in a fresh folder:
+  a new virtual environment with every package installed, `.env` made from `.env.example` with real values, migrate,
+  start. Then the first journey runs (scripted agent, `AGENT_TEST_MODE=fake`): register, verify with the link the
+  console mailer printed, create a project, run, approve, download.
+- **D02:** the migration command on a database one file behind applies only the new file;
+  `python -m app.migrate --status` lists it as pending before.
+
+Fixed during this phase (found by the tests):
+1. B11-S03: a null character in any text field (for example a project name) reached PostgreSQL, which cannot
+   store it: 500. Every request body now refuses it with 422 (a shared base for the request models).
+2. B11-S07: a run whose code could not be copied (zip refused, clone failed, cancel before the copy) left its run
+   folder behind, with the uploaded zip, until the 24-hour cleanup. The finish step now deletes that folder at once.
+3. B11-R01: if the database went away while the agent worked, the agent failed, and saving "failed" failed too. The
+   run then stayed active with nothing working on it until the next server restart. The runner now keeps trying to
+   save the end (1 s, 2 s, 4 s ... up to 30 s apart) until the database is back.
+4. Test helper (not app code): the fake test runner shared one list of answers across parallel runs, so one run
+   could take another run's answer. Answers are now decided per call.
+
+Decisions made where the design docs were silent (please check):
+1. B11-E01 to E07 ran with a scripted model instead of the real Groq (not reachable here), and E02 with a local
+   folder instead of a GitHub repo. The real-Groq versions stay in "Open items".
+2. Long load tests: the full lengths run with `SANGRA_LONG_TESTS=1`; the normal suite runs them for 60 to 90 s.
+3. L01 "p95 under 500 ms for normal routes": the live stream is not counted, since it stays open by design; login
+   is counted (323 ms).
+4. A null character is refused in every text field (422), as no field needs one.
 
 ---
 

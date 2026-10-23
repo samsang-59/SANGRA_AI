@@ -40,7 +40,9 @@ class FakeTestRunner:
         self.calls: list[dict] = []
         self.cancelled = 0
 
-    async def run(self, *, run_id, user_id, code_dir, language, test_command, log_path=None, timeout=None):
+    async def run(self, *, run_id, user_id, code_dir, language, test_command, log_path=None, timeout=None,
+                  status=None):
+        """status: the answer for this call (instead of the next one of the script)."""
         content = (Path(code_dir) / FILE).read_text() if (Path(code_dir) / FILE).exists() else None
         self.calls.append({"run_id": run_id, "content": content, "log_path": log_path})
         try:
@@ -48,7 +50,8 @@ class FakeTestRunner:
         except asyncio.CancelledError:
             self.cancelled += 1
             raise
-        status = self.statuses.pop(0) if self.statuses else "passed"
+        if status is None:
+            status = self.statuses.pop(0) if self.statuses else "passed"
         exit_code = {"passed": 0, "failed": 1, "error": None, "error127": 127, "timed_out": None}[status]
         note = {"error": "Docker is not running or cannot be reached",
                 "error127": "the test command was not found", "timed_out": "too long"}.get(status)
@@ -178,10 +181,11 @@ def install_responder(app, latency: float = 0.0, test_seconds: float = 0.0) -> t
     runner.statuses = None  # answers "failed" for every baseline and "passed" after a fix
 
     async def run(*, run_id, user_id, code_dir, language, test_command, log_path=None, timeout=None):
+        # Decided per call (never through the shared script), so parallel runs cannot take each other's answer.
         fixed = "0.10" in (Path(code_dir) / FILE).read_text()
-        runner.statuses = ["passed" if fixed else "failed"]
         return await FakeTestRunner.run(runner, run_id=run_id, user_id=user_id, code_dir=code_dir, language=language,
-                                        test_command=test_command, log_path=log_path, timeout=timeout)
+                                        test_command=test_command, log_path=log_path, timeout=timeout,
+                                        status="passed" if fixed else "failed")
 
     runner.run = run
     services = AgentServices(app.state.run_progress, app.state.workspace_manager, runner, lambda: llm,

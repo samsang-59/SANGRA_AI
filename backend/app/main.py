@@ -88,6 +88,9 @@ def register_finish_steps(app: FastAPI, progress: RunProgress, runner: AgentRunn
         if run.get("workspace_path"):
             await asyncio.to_thread(workspaces.delete, Path(run["workspace_path"]))
             await progress.mark_workspace_deleted(run["id"])
+        else:  # the copy was never made (refused zip, failed clone, cancel before it): the run folder may still
+            # hold the uploaded zip and the logs folder
+            await asyncio.to_thread(workspaces.delete, workspaces.run_dir(run["user_id"], run["id"]))
 
     async def delete_snapshot_if_idle(run: dict) -> None:
         if not runner.is_running(run["id"]):
