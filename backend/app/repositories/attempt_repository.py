@@ -168,3 +168,17 @@ async def find_with_edits(pool: AsyncConnectionPool, run_id: int, attempt_id: in
             return None
         cur = await conn.execute(_EDITS_OF_SQL, (attempt_id,))
         return {**attempt, "edits": await cur.fetchall()}
+
+
+_SUCCESSFUL_EDITS_SQL = (
+    "SELECT e.id, e.attempt_id, e.file_path, e.start_line, e.end_line, e.old_code, e.new_code, e.edit_order, "
+    "e.explanation FROM file_edits e JOIN attempts a ON a.id = e.attempt_id "
+    "WHERE a.run_id = %s AND a.status = 'tests_passed' ORDER BY e.edit_order"
+)
+
+
+async def find_successful_edits(pool: AsyncConnectionPool, run_id: int) -> list[dict]:
+    """The edits of the attempt that passed the tests ("Apply to my folder")."""
+    async with pool.connection() as conn:
+        cur = await conn.execute(_SUCCESSFUL_EDITS_SQL, (run_id,))
+        return await cur.fetchall()

@@ -48,6 +48,18 @@ async def cancel(request: Request, run_id: EntityId, user: dict = Depends(get_cu
     return await run_controller.cancel(request, run_id, user)
 
 
+@router.post("/runs/{run_id}/apply-to-source")
+async def apply_to_source(request: Request, run_id: EntityId, user: dict = Depends(get_current_user)):
+    """"Apply to my folder" (local mode, local folder projects, succeeded runs, once)."""
+    return await run_controller.apply_to_source(request, run_id, user)
+
+
+@router.get("/runs/{run_id}/package")
+async def download_package(request: Request, run_id: EntityId, user: dict = Depends(get_current_user)):
+    """The download package (a zip). 410 PACKAGE_EXPIRED after 7 days."""
+    return await run_controller.package(request, run_id, user)
+
+
 @router.delete("/runs/{run_id}")
 async def delete_run(request: Request, run_id: EntityId, user: dict = Depends(get_current_user)):
     return await run_controller.delete(request, run_id, user)

@@ -120,6 +120,13 @@ class Settings(BaseSettings):
     # MAILER_MODE=file writes every email to MAIL_FILE (test setups only, refused in deployed mode).
     mail_file: Path | None = None
 
+    # Packages and cleanup (04_backend_design.md 6.4 step 11 and "Background jobs"): a package is kept 7 days; the
+    # cleanup jobs run every hour, in batches; used or expired email tokens are removed a day after they expired.
+    package_expiry_days: int = Field(default=7, gt=0)
+    cleanup_interval_seconds: float = Field(default=3600.0, gt=0)
+    cleanup_batch_size: int = Field(default=500, gt=0)
+    token_retention_hours: int = Field(default=24, ge=0)
+
     # Passwords: bcrypt cost (each +1 doubles the time; 12 is about 0.25 s per hash).
     bcrypt_rounds: int = Field(default=12, ge=4, le=16)
 

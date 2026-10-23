@@ -135,3 +135,11 @@ async def update_password(pool: AsyncConnectionPool, user_id: int, new_password_
             "UPDATE users SET password_hash = %s, password_changed_at = now(), updated_at = now() WHERE id = %s",
             (new_password_hash, user_id),
         )
+
+
+async def delete_old_tokens(pool: AsyncConnectionPool, older_than_hours: int) -> int:
+    """Housekeeping: removes email tokens that expired more than `older_than_hours` ago (used or not)."""
+    async with pool.connection() as conn:
+        cur = await conn.execute(
+            "DELETE FROM user_tokens WHERE expires_at < now() - make_interval(hours => %s)", (older_than_hours,))
+        return cur.rowcount

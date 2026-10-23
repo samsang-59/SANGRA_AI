@@ -6,7 +6,9 @@ timeout all end runs through it. Only the first caller wins (a conditional updat
 (package, workspace deletion, LangGraph snapshot deletion; filled in by later phases) run once, for the winner.
 """
 
+import asyncio
 import logging
+import weakref
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
@@ -14,10 +16,12 @@ from psycopg_pool import AsyncConnectionPool
 
 from app.core.config import Settings
 from app.repositories import attempt_repository, event_repository, run_repository, test_result_repository
+from app.repositories.event_repository import FINAL_STATUSES
 
 logger = logging.getLogger("app.run")
 
 FinishHook = Callable[[dict], Awaitable[None]]
+BeforeFinalHook = Callable[[dict, str, "str | None", str], Awaitable[None]]
 
 # Plain words for every stop reason in the design (04_backend_design.md, step 11).
 STOP_REASON_TEXT = {
@@ -54,7 +58,23 @@ def summary_for(final_status: str, stop_reason: str | None, baseline_passed: boo
 class RunProgress:
     pool: AsyncConnectionPool
     settings: Settings
+    # Steps BEFORE the final status is saved (undo, build the package), called with
+    # (run, final_status, stop_reason, summary).
+    before_final_hooks: list[BeforeFinalHook] = field(default_factory=list)
+    # Steps AFTER the final status is saved (delete the temporary copy, delete the LangGraph snapshot).
     finish_hooks: list[FinishHook] = field(default_factory=list)
+    # Stops the run's background agent task (set at startup to AgentRunner.cancel); used by cancel().
+    stop_agent: Callable[[int], Awaitable[None]] | None = None
+    _locks: "weakref.WeakValueDictionary[int, asyncio.Lock]" = field(default_factory=weakref.WeakValueDictionary)
+
+    def _lock(self, run_id: int) -> asyncio.Lock:
+        """One finish at a time per run (a cancel and the agent's own finish at the same moment: one package, one
+        final status). One backend process, so an in-memory lock is enough (as for the rate limiter)."""
+        lock = self._locks.get(run_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._locks[run_id] = lock
+        return lock
 
     async def emit(self, run_id: int, event_type: str, message: str, details: dict | None = None,
                    attempt_id: int | None = None) -> dict | None:
@@ -120,8 +140,19 @@ class RunProgress:
             logger.info("Run %s finished: %s (%s)", run_id, final_status, stop_reason)
         return run
 
+    async def _summary(self, run_id: int, final_status: str, stop_reason: str | None) -> str:
+        baseline = await test_result_repository.find_baseline(self.pool, run_id)
+        return summary_for(final_status, stop_reason, bool(baseline and baseline["status"] == "passed"))
+
+    async def _run_before_final(self, run: dict, final_status: str, stop_reason: str | None, summary: str) -> None:
+        for hook in self.before_final_hooks:
+            try:
+                await hook(run, final_status, stop_reason, summary)
+            except Exception as exc:
+                logger.error("A finish step failed for run %s (%s)", run["id"], type(exc).__name__)
+
     async def run_finish_hooks(self, run: dict) -> None:
-        """Step 2 of finishing. A failing hook is logged and never stops the others."""
+        """The steps after the final status. A failing step is logged and never stops the others."""
         for hook in self.finish_hooks:
             try:
                 await hook(run)
@@ -130,9 +161,39 @@ class RunProgress:
 
     async def finish(self, run_id: int, final_status: str, stop_reason: str | None,
                      summary: str | None = None) -> bool:
-        """The shared finalize function. True if this call ended the run; False if it was already finished."""
-        run = await self.mark_finished(run_id, final_status, stop_reason, summary)
-        if run is None:
-            return False
-        await self.run_finish_hooks(run)
-        return True
+        """The shared finalize function (04_backend_design.md 6.4 step 11), in its order: undo and build the package,
+        then save the final status (its status_changed event is the last event), then delete the temporary copy.
+        True if this call ended the run; False if it was already finished."""
+        async with self._lock(run_id):
+            run = await run_repository.find_by_id(self.pool, run_id)
+            if run is None or run["status"] in FINAL_STATUSES:
+                return False
+            summary = summary or await self._summary(run_id, final_status, stop_reason)
+            await self._run_before_final(run, final_status, stop_reason, summary)
+            finished = await self.mark_finished(run_id, final_status, stop_reason, summary)
+            if finished is None:
+                return False
+            await self.run_finish_hooks(finished)
+            return True
+
+    async def cancel(self, run_id: int) -> dict | None:
+        """Cancel (04_backend_design.md RunService.cancel_run), in its order: mark the run stopped (conditional: of a
+        cancel and an Accept at the same moment only one wins), stop the agent and its test container, undo the
+        applied edits, build the package, delete the copy. None if the run was not active any more."""
+        async with self._lock(run_id):
+            summary = await self._summary(run_id, "stopped", "cancelled_by_user")
+            finished = await self.mark_finished(run_id, "stopped", "cancelled_by_user", summary)
+            if finished is None:
+                return None
+            if self.stop_agent is not None:
+                await self.stop_agent(run_id)
+            await self._run_before_final(finished, "stopped", "cancelled_by_user", summary)
+            await self.run_finish_hooks(finished)
+            return finished
+
+    async def complete_finish(self, run: dict) -> None:
+        """Startup recovery: a finished run whose finish steps were cut off (the server stopped in the middle). The
+        package is built if it is missing, then the copy is deleted."""
+        async with self._lock(run["id"]):
+            await self._run_before_final(run, run["status"], run["stop_reason"], run["final_summary"] or "")
+            await self.run_finish_hooks(run)

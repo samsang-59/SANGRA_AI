@@ -7,6 +7,7 @@ which runs it is running; at that moment it runs nothing.) Shutdown runs in reve
 """
 
 import asyncio
+import gc
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -39,6 +40,7 @@ from app.runners.test_runner import TestRunner
 from app.runners.workspace_manager import WorkspaceManager
 from app.services.cleanup_service import RunCleanup
 from app.services.jobs import JobScheduler
+from app.services.package_service import build_run_package
 from app.services.run_progress import RunProgress
 
 logger = logging.getLogger("app.main")
@@ -64,19 +66,23 @@ def build_workflow(app: FastAPI, progress: RunProgress, checkpointer: AsyncPostg
 
 def register_finish_steps(app: FastAPI, progress: RunProgress, runner: AgentRunner,
                           workflow: LangGraphWorkflow) -> None:
-    """What happens when a run ends (by the agent, a cancel, the timeout or a restart), in this order:
-    undo what is still changed (unless it succeeded), delete the temporary copy, delete the LangGraph snapshot when
-    no graph is running for the run (a running graph's snapshot is deleted by the runner after it ends).
-    B10 adds the package before the copy is deleted."""
+    """What happens when a run ends (by the agent, a cancel, the timeout or a restart), in this order
+    (04_backend_design.md 6.4 step 11): undo what is still changed (unless the run succeeded) and build the package;
+    then the final status is saved; then the temporary copy is deleted and the LangGraph snapshot is deleted (by the
+    runner after the graph has ended, or at once if no graph runs for the run)."""
     workspaces: WorkspaceManager = app.state.workspace_manager
+    settings: Settings = app.state.settings
 
-    async def undo_unless_succeeded(run: dict) -> None:
+    async def undo_unless_succeeded(run: dict, final_status: str, stop_reason, summary: str) -> None:
         code = Path(run["workspace_path"]) / "code" if run.get("workspace_path") else None
-        if run["status"] != "succeeded" and code is not None and (code / ".git").exists():
+        if final_status != "succeeded" and code is not None and (code / ".git").exists():
             try:
                 await asyncio.to_thread(workspaces.undo, code)
             except Exception as exc:
                 logger.warning("Run %s: undo at the end failed (%s)", run["id"], type(exc).__name__)
+
+    async def package(run: dict, final_status: str, stop_reason, summary: str) -> None:
+        await build_run_package(app.state.db_pool, settings, workspaces, run, final_status, stop_reason, summary)
 
     async def delete_workspace(run: dict) -> None:
         if run.get("workspace_path"):
@@ -92,7 +98,9 @@ def register_finish_steps(app: FastAPI, progress: RunProgress, runner: AgentRunn
         if run is None or run["status"] in ("succeeded", "failed", "stopped"):
             await workflow.delete_snapshots(run_id)
 
-    progress.finish_hooks.extend([undo_unless_succeeded, delete_workspace, delete_snapshot_if_idle])
+    progress.before_final_hooks.extend([undo_unless_succeeded, package])
+    progress.finish_hooks.extend([delete_workspace, delete_snapshot_if_idle])
+    progress.stop_agent = runner.cancel
     runner.after_end_hooks.append(delete_snapshot_after_end)
     app.state.run_cleanup.thread_deleters.append(workflow.delete_snapshots)
 
@@ -115,7 +123,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.run_progress = progress
     app.state.agent_runner = runner
     app.state.agent_workflow = workflow
-    jobs = JobScheduler(progress, runner, server_started_at)
+    jobs = JobScheduler(progress, runner, server_started_at, app.state.workspace_manager,
+                       app.state.run_cleanup)
     app.state.jobs = jobs
     try:
         if not await app.state.docker_check():
@@ -124,6 +133,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             await app.state.test_runner.remove_leftovers()  # containers left over after a crash (Gaps #7)
         await jobs.try_recovery()  # if the database is down now, the jobs try again in the background
         jobs.start()
+        # Everything loaded at startup (modules, LangGraph, settings) lives until shutdown: moving it out of the
+        # garbage collector's reach keeps full collections short (one took about 100 ms during 20 runs, B9-L02).
+        gc.freeze()
         logger.info("SANGRA_AI started (mode=%s)", settings.app_mode)
         yield
     finally:

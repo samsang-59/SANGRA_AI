@@ -5,8 +5,11 @@ the background (AgentRunner). The screen follows along through the live stream.
 """
 
 import asyncio
+import errno
 import logging
+import os
 import shutil
+import stat
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -14,6 +17,7 @@ from typing import BinaryIO
 
 from psycopg_pool import AsyncConnectionPool
 
+from app.agent.edits import Edit, EditError, plan_edits, write_planned_all_or_nothing
 from app.agent.runner import AgentRunner
 from app.core.config import Settings
 from app.core.result import Result
@@ -65,7 +69,7 @@ def public_package(package: dict | None) -> dict | None:
         "created_at": package["created_at"],
         "expires_at": package["expires_at"],
         "deleted_at": package["deleted_at"],
-        "available": package["deleted_at"] is None,
+        "available": package["deleted_at"] is None and not package.get("expired", False),
     }
 
 
@@ -208,13 +212,10 @@ async def cancel_run(ctx: RunContext, user: dict, run_id: int) -> Result:
         return _not_found()
     if run["status"] not in ACTIVE_STATUSES:
         return _state_invalid("cancel the run")
-    # 1. Mark stopped (conditional: of a cancel and an Accept at the same moment only one wins).
-    finished = await ctx.progress.mark_finished(run_id, "stopped", "cancelled_by_user")
+    # Mark stopped (conditional), stop the agent and its container, undo, package, delete the copy.
+    finished = await ctx.progress.cancel(run_id)
     if finished is None:
         return _state_invalid("cancel the run")
-    # 2. Tell the background agent to stop. 3. Finish like a normal ending (the finish hooks).
-    await ctx.runner.cancel(run_id)
-    await ctx.progress.run_finish_hooks(finished)
     return Result.success(public_run(finished))
 
 
@@ -227,3 +228,66 @@ async def delete_run(ctx: RunContext, user: dict, run_id: int) -> Result:
     # After the commit: the package file and the LangGraph data. Failures are logged inside.
     await ctx.cleanup.after_runs_deleted([run_id], outcome["package_paths"])
     return Result.success({"id": run_id, "deleted": True})
+
+
+def _package_problem(package: dict | None) -> Result | None:
+    if package is None:
+        return _state_invalid("download the package yet (it is built when the run ends)")
+    if package["deleted_at"] is not None or package["expired"]:
+        return Result.failure("PACKAGE_EXPIRED", "The package has expired (packages are kept 7 days).")
+    return None
+
+
+async def get_package(ctx: RunContext, user: dict, run_id: int) -> Result:
+    """NOT_FOUND if not theirs; not built yet -> RUN_STATE_INVALID; deleted or expired -> PACKAGE_EXPIRED."""
+    if await run_repository.find_by_id_and_user(ctx.pool, run_id, user["id"]) is None:
+        return _not_found()
+    package = await package_repository.find_by_run(ctx.pool, run_id)
+    if problem := _package_problem(package):
+        return problem
+    return Result.success({"path": package["storage_path"], "filename": f"sangra-run-{run_id}.zip"})
+
+
+def _apply_to_folder(folder: Path, edits: list[dict], max_edits: int, max_changed_lines: int) -> None:
+    planned = plan_edits(folder, [Edit.from_dict(e) for e in edits], max_edits, max_changed_lines)
+    for path in planned:
+        # A read-only file is refused (a rename over it would succeed on most systems and silently change it).
+        if not path.stat().st_mode & stat.S_IWUSR or not os.access(path, os.W_OK):
+            raise PermissionError(errno.EACCES, "the file is read-only", str(path))
+    write_planned_all_or_nothing(planned)
+
+
+async def apply_to_source(ctx: RunContext, user: dict, run_id: int) -> Result:
+    """"Apply to my folder". The user may have edited the folder after the run started, so whole files are never
+    overwritten: the same edits are applied again with the same old_code check on the exact lines. ALL edits are
+    checked first; if any no longer matches, nothing is written (SOURCE_CHANGED)."""
+    run = await run_repository.find_by_id_and_user(ctx.pool, run_id, user["id"])
+    if run is None:
+        return _not_found()
+    if ctx.settings.app_mode != "local" or run["source_type"] != "local_path":
+        return Result.failure("LOCAL_PATH_NOT_ALLOWED",
+                              "Apply to my folder works only for local folder projects when the backend runs on your "
+                              "own machine. Download the package instead.")
+    if run["status"] != "succeeded" or run["applied_to_source_at"] is not None:
+        return _state_invalid("apply this run to your folder (only a succeeded run, once)")
+    if problem := _package_problem(await package_repository.find_by_run(ctx.pool, run_id)):
+        return problem if problem.error_code == "PACKAGE_EXPIRED" else Result.failure(
+            "PACKAGE_EXPIRED", "The package of this run is not available.")
+    # Claim first (one conditional update): a second click at the same moment gets RUN_STATE_INVALID.
+    if await run_repository.mark_applied_to_source(ctx.pool, run_id, user["id"]) is None:
+        return _state_invalid("apply this run to your folder (only a succeeded run, once)")
+    edits = await attempt_repository.find_successful_edits(ctx.pool, run_id)
+    try:
+        await asyncio.to_thread(_apply_to_folder, Path(run["source_reference"]), edits,
+                                ctx.settings.max_edits_per_attempt, ctx.settings.max_changed_lines)
+    except EditError as exc:
+        await run_repository.clear_applied_to_source(ctx.pool, run_id)
+        logger.info("Run %s: apply to source refused (%s problems)", run_id, len(exc.problems))
+        return Result.failure("SOURCE_CHANGED", "Your folder changed since the run, so nothing was written. "
+                                                "Download the patch instead.")
+    except OSError as exc:
+        await run_repository.clear_applied_to_source(ctx.pool, run_id)
+        return Result.failure("SOURCE_NOT_WRITABLE", f"A file in your folder could not be written ({exc.strerror}), so "
+                                                     "nothing was changed.")
+    run = await run_repository.find_by_id_and_user(ctx.pool, run_id, user["id"])
+    return Result.success(public_run(run))

@@ -311,8 +311,10 @@ class WorkspaceManager:
             raise PathRefused("only folders inside the workspaces folder can be deleted")
         self._remove_tree(run_dir)
 
-    def delete_older_than(self, max_age_seconds: float, now: float | None = None) -> list[Path]:
-        """Workspace cleanup: removes run folders (workspaces/<user>/<run>) not changed for max_age_seconds."""
+    def delete_older_than(self, max_age_seconds: float, now: float | None = None,
+                          keep: set[int] | frozenset[int] = frozenset()) -> list[Path]:
+        """Workspace cleanup: removes run folders (workspaces/<user>/<run>) not changed for max_age_seconds, except
+        the folders of the runs in `keep` (the active runs)."""
         now = time.time() if now is None else now
         removed = []
         if not self.root.is_dir():
@@ -321,6 +323,8 @@ class WorkspaceManager:
             if not user_dir.is_dir() or user_dir.is_symlink():
                 continue
             for run_dir in user_dir.iterdir():
+                if run_dir.name.isdigit() and int(run_dir.name) in keep:
+                    continue
                 try:
                     if run_dir.is_dir() and not run_dir.is_symlink() and run_dir.stat().st_mtime < now - max_age_seconds:
                         self._remove_tree(run_dir)

@@ -182,3 +182,18 @@ def write_planned(planned: dict[Path, bytes]) -> None:
 def bottom_up_order(edits: list[dict]) -> list[dict]:
     """The order edits are saved in (04_backend_design.md 6.4 step 6): per file, from the bottom up."""
     return sorted(edits, key=lambda e: (e["file_path"], -e["start_line"]))
+
+
+def write_planned_all_or_nothing(planned: dict[Path, bytes]) -> None:
+    """Like write_planned, for a folder without git to undo with (the user's own folder): if writing one file fails,
+    the files already written are put back as they were, then the error is raised."""
+    originals = {path: path.read_bytes() for path in planned}
+    written: list[Path] = []
+    try:
+        for path, data in planned.items():
+            write_planned({path: data})
+            written.append(path)
+    except BaseException:
+        for path in written:
+            write_planned({path: originals[path]})
+        raise

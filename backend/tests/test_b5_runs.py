@@ -453,7 +453,8 @@ async def test_B5_S01_another_user_gets_404_on_every_run_route(app, client, db, 
         client.post(f"{base}/hint", headers=bob["headers"], json={"text": "hint text"}),
         client.post(f"{base}/cancel", headers=bob["headers"]),
         client.delete(done, headers=bob["headers"]),
-        # package and apply-to-source are built in B10; they are added to this table there.
+        client.get(f"{done}/package", headers=bob["headers"]),
+        client.post(f"{done}/apply-to-source", headers=bob["headers"]),
     ]
     for response in [await call for call in calls]:
         assert_error(response, 404, "NOT_FOUND")

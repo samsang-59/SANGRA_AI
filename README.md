@@ -7,7 +7,7 @@ You describe a bug in plain English. SANGRA_AI searches your code, finds the wro
 it undoes the change and tries again (up to 3 times). Your original code is never touched.
 
 > **Status:** implementation in progress, phase by phase (see [the plan](06_implementation_plan.md) and
-> [Implementation progress](#implementation-progress) below). Current phase: **B9 The LangGraph agent** (awaiting review).
+> [Implementation progress](#implementation-progress) below). Current phase: **B10 Finish, package, download, apply to my folder, cleanup** (awaiting review).
 
 ---
 
@@ -153,8 +153,9 @@ A phase is done only when all of its tests pass **and** all earlier tests still 
 | B6 Workspace manager and the 3 read-only code tools | Done (approved) | 61 of 61 pass |
 | B7 Docker test runner | Done (approved) | 24 of 24 pass; B7-M01 is manual (Windows), not done yet |
 | B8 LLM client and prompts | Done (approved) | 29 of 29 pass; B8-M01 and B8-Q01 (real Groq) not run yet |
-| B9 The LangGraph agent (11 steps, pause and resume, limits) | Built, awaiting review | 62 of 62 pass (541 in total with B0 to B8); B9-E01 (real Groq) not run yet |
-| B10 to B11, FE0 to FE7 | Not started | |
+| B9 The LangGraph agent (11 steps, pause and resume, limits) | Done (approved) | 62 of 62 pass (541 in total with B0 to B8); B9-E01 (real Groq) not run yet |
+| B10 Finish, package, download, apply to my folder, cleanup | Built, awaiting review | 36 of 36 pass (577 in total with B0 to B9) |
+| B11, FE0 to FE7 | Not started | |
 
 ### Running the backend
 
@@ -586,6 +587,77 @@ Decisions made where the design docs were silent (please check):
    Both are refused in deployed mode. The browser tests (FE7) may need more from them.
 6. The run detail events for steps use the existing event types: `tool_called` for each tool call, `tool_result` for
    "found N places", "a fix was drafted" and "applied N edits in M files", `error` for clear failure messages.
+
+### B10: Finish, package, download, apply to my folder, cleanup (notes)
+
+Built:
+- `app/runners/finalizer.py`: builds the download package of a finished run. It holds `summary.md` (from a template:
+  status, the reason in plain words, the bug, the tests before and after each attempt, the attempts) and the full test
+  logs (`logs/baseline.log`, `logs/attempt_<n>.log`). A succeeded run also gets `changes.patch` (git diff of the copy)
+  and `fixed_files/<path>` (only the changed files). Other endings get `attempts.md` (every attempt with its edits,
+  decision and result). Never the whole project. Zip names are built only from fixed names and the edits' relative
+  paths; a name with `..`, an absolute part, a backslash or a null byte is never written, and a source file outside the
+  copy is never read. The zip is written to a temporary file and renamed.
+- `app/services/package_service.py`: builds the package and saves its row (expires 7 days later). At most one package
+  per run. If building fails, the run still finishes with its final status, an `error` event says the package is
+  missing, and the changes stay visible in the run detail.
+- The finish order (04_backend_design.md 6.4 step 11): undo what is still changed (unless the run succeeded), build the
+  package, save the final status (its `status_changed` event is the last event), delete the copy, delete the LangGraph
+  snapshot. A cancel saves the stopped status first (as `cancel_run` says), then stops the agent, undoes, builds the
+  package and deletes the copy. A per-run lock makes a cancel and the graph's own finish at the same moment end the run
+  once, with one package.
+- Startup recovery also completes finishes that were cut off: a finished run whose copy still exists gets its missing
+  package and its copy deleted.
+- `GET /runs/{id}/package`: streams the file in 64 KB chunks with `Content-Disposition` and `Content-Length`. The file
+  is opened before the answer starts, so a cleanup that deletes it during a download cannot break that download.
+- `POST /runs/{id}/apply-to-source`: local mode and local folder projects only, succeeded runs only, once. The run is
+  claimed first with one conditional update, so two clicks at once write once. The same edits are checked again against
+  the user's folder (the exact old lines must still be there). All edits are checked before anything is written; if
+  one file then cannot be written, the files already written are put back.
+- Cleanup jobs (every `CLEANUP_INTERVAL_SECONDS`, default 1 hour):
+  - expired packages, in batches (file deleted, then `deleted_at` set);
+  - copies of finished runs older than 24 hours (`workspace_deleted_at` set), and run folders older than 24 hours that
+    belong to no active run (left behind by a deleted run);
+  - package files that no row points to any more, at least 1 hour old;
+  - email tokens that expired more than 24 hours ago.
+  A file that cannot be deleted is logged and tried again next time; one failing job does not stop the others.
+
+Test results: `tests/test_b10_package.py`, 36 tests, all pass. B5-S01 now also checks the package and apply routes
+(another user gets 404). Full suite: 577 of 577 pass (B0 to B10).
+Numbers: 10,000 expired packages cleaned in about 1.1 s in batches of 500, `/health` at most 13 ms during it
+(B10-L01); a 50 MB download takes 0.17 s and the server's peak memory grows by about 1 MB (B10-L02); 20 parallel 2 MB
+downloads in 0.27 s (B10-L03); 50 runs finishing at the same moment give 50 packages, each in its user's folder with
+its own summary, total disk use equal to the stored sizes (B10-L04).
+
+Fixed during this phase (found by the tests):
+1. B10-S02: an edit with an absolute path (`/etc/passwd`) passed the zip-name check (it became
+   `fixed_files/etc/passwd`) and the file would have been read from outside the copy. Absolute parts are now refused
+   and the source file must be inside the copy.
+2. B10-L01: the first version deleted and marked one package at a time (18 s for 10,000). Each batch now deletes its
+   files in one thread call and marks them with one statement.
+3. B9-L02 (20 runs at the same time) failed in the full run at 104 ms (limit 100 ms; it was 16 ms in B9). The cause was
+   a full garbage-collector pass of about 100 ms, not our code. B10 creates more objects, so a pass now fell inside the
+   measured window. The app now calls `gc.freeze()` once startup is done: the objects loaded at startup stay
+   until shutdown anyway, so the collector stops scanning them. The worst delay is back to 15 to 27 ms. Packages are
+   also built in a small pool of their own (2 threads), so many runs finishing at once wait their turn instead of
+   filling the shared thread pool.
+
+Decisions made where the design docs were silent (please check):
+1. Package files are stored at `PACKAGES_DIR/<user_id>/run_<run_id>.zip`; the download name is `sangra-run-<id>.zip`.
+2. A normal finish builds the package before the final status is saved (as 6.4 step 11 lists it); a cancel saves the
+   final status first (as `cancel_run` lists it).
+3. B10-R02: if the server stops after the package was built but before the final status, startup recovery ends the run
+   as `failed` (`server_restarted`) like any interrupted run, and keeps the package already built (no second package).
+   That package's summary then still describes the run as it was about to end.
+4. A new error code `SOURCE_NOT_WRITABLE` (409) for "Apply to my folder" when a file is read-only or cannot be written;
+   nothing is changed. A deleted original file is reported as `SOURCE_CHANGED`. Windows line endings are kept.
+5. If applying fails (`SOURCE_CHANGED` or `SOURCE_NOT_WRITABLE`), `applied_to_source_at` is cleared again, so the user
+   can fix the folder and try once more.
+6. "Apply to my folder" also needs the package to be available (`PACKAGE_EXPIRED` after 7 days), as B10-X04 asks.
+7. Cleanup ages and sizes: copies older than `WORKSPACE_MAX_AGE_HOURS` (24); orphan package files at least 1 hour old
+   (so a package being built is never taken); email tokens removed 24 hours after they expired
+   (`TOKEN_RETENTION_HOURS`); batches of 500 (`CLEANUP_BATCH_SIZE`). The run detail shows a package as not available
+   once it is expired, even before the cleanup job has deleted it.
 
 ---
 

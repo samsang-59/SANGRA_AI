@@ -34,6 +34,7 @@ ERROR_STATUS: dict[str, int] = {
     "WRONG_OLD_PASSWORD": 400,
     "NEW_PASSWORD_SAME_AS_OLD": 400,
     "SOURCE_CHANGED": 409,
+    "SOURCE_NOT_WRITABLE": 409,
     # From other layers.
     "UNAUTHORIZED": 401,
     "RATE_LIMITED": 429,
