@@ -7,7 +7,7 @@ You describe a bug in plain English. SANGRA_AI searches your code, finds the wro
 it undoes the change and tries again (up to 3 times). Your original code is never touched.
 
 > **Status:** implementation in progress, phase by phase (see [the plan](06_implementation_plan.md) and
-> [Implementation progress](#implementation-progress) below). Current phase: **B11 End to end, security sweep, soak and chaos tests** (awaiting review). The backend is complete; the frontend (FE0 to FE7) comes next.
+> [Implementation progress](#implementation-progress) below). Current phase: **FE0 Frontend project setup** (awaiting review). The backend (B0 to B11) is complete.
 
 ---
 
@@ -155,8 +155,9 @@ A phase is done only when all of its tests pass **and** all earlier tests still 
 | B8 LLM client and prompts | Done (approved) | 29 of 29 pass; B8-M01 and B8-Q01 (real Groq) not run yet |
 | B9 The LangGraph agent (11 steps, pause and resume, limits) | Done (approved) | 62 of 62 pass (541 in total with B0 to B8); B9-E01 (real Groq) not run yet |
 | B10 Finish, package, download, apply to my folder, cleanup | Done (approved) | 36 of 36 pass (577 in total with B0 to B9) |
-| B11 End to end, security sweep, soak and chaos tests | Built, awaiting review | 30 of 30 pass (607 in total with B0 to B10); B11-E01 to E07 with the real Groq not run yet |
-| FE0 to FE7 | Not started | |
+| B11 End to end, security sweep, soak and chaos tests | Done (approved) | 30 of 30 pass (607 in total with B0 to B10); B11-E01 to E07 with the real Groq not run yet |
+| FE0 Frontend project setup (Vite, React, router, QueryClient, env, design tokens) | Built, awaiting review | 22 unit + 6 browser tests pass (Chromium); lint and build scan clean; backend 607 of 607 still pass. FE0-B01 in Firefox not run yet |
+| FE1 to FE7 | Not started | |
 
 ### Open items (manual checks still to do)
 
@@ -209,6 +210,21 @@ Some tests need Docker running (the real test runner, B7 and B11) and use the `m
 short version by default; `SANGRA_LONG_TESTS=1 .venv/bin/pytest -q tests/test_b11_load.py tests/test_b11_deploy.py`
 runs the full lengths of the plan (10 minutes of load, 30 minutes of soak, a fresh virtual environment for D01).
 The dependency audit (B11-S05) needs `pip install pip-audit`.
+
+### Running the frontend
+
+Needs Node.js 22 or newer. The backend must run as well (it answers on `http://localhost:8000/api/v1`).
+
+```bash
+cd frontend
+npm install
+cp .env.example .env              # VITE_API_URL = the backend address (default http://localhost:8000/api/v1)
+npm run dev                       # serves http://localhost:5173
+```
+
+Frontend checks: `npm run lint`, `npm test` (unit tests, Vitest), `npm run build && npm run check:build` (the production
+build, then a scan of it for secrets), `npm run test:e2e` (browser tests with Playwright; it starts `npm run dev` and
+`npm run preview` itself, so run `npm run build` first; `E2E_FIREFOX=1` adds Firefox where it is installed).
 
 ### B0: Foundation (notes)
 
@@ -810,6 +826,57 @@ Decisions made where the design docs were silent (please check):
 3. L01 "p95 under 500 ms for normal routes": the live stream is not counted, since it stays open by design; login
    is counted (323 ms).
 4. A null character is refused in every text field (422), as no field needs one.
+
+### FE0: Frontend project setup (notes)
+
+The screen designs (19 screens, given before the frontend started) are kept in `design/screens/`. They follow the design
+documents (the same pages, routes, components, stop-reason texts and error codes) and add the look that
+05_frontend_design.md left open.
+
+Built (in `frontend/`):
+- Vite + React 19, React Router (the route table of F1, `src/App.jsx`), TanStack Query (`src/queryClient.js`), started
+  in `src/main.jsx`.
+- `src/config.js`: the API address from `VITE_API_URL`; missing or empty means the documented default
+  `http://localhost:8000/api/v1`; a trailing slash is dropped.
+- The folder layout of F5: `src/api`, `src/auth`, `src/hooks`, `src/pages`, `src/components`, `src/styles`.
+- `src/styles/tokens.css`: every colour, radius and size from the foundations sheet ("Phosphor Amber", dark only).
+  `base.css` holds the fonts (Inter and JetBrains Mono, served with the app), base text and the button styles.
+- The "page not found" page as in its screen. The pages of later phases are stand-ins that name their phase; each is
+  replaced in that phase.
+- Lint (ESLint), unit tests (Vitest with jsdom and Testing Library), browser tests (Playwright, against both
+  `npm run dev` and the built app), and `scripts/check-build.mjs` (scans the built files for secrets).
+
+Test results:
+- Unit (`tests/unit/fe0_setup.test.jsx`): 22 of 22 pass. They cover F01 (every F1 route has its page; `/` goes to
+  /projects), F03 and X01 (the address from the env file, and the default when it is missing or blank), and X02
+  (three unknown URLs show the 404 page).
+- Browser (`tests/e2e/fe0_setup.spec.js`): 6 of 6 pass in Chromium against `npm run dev` (F01) and against the
+  production build through `npm run preview` (F02). They check the first page, the 404 page and its link, that the
+  design colours and both fonts load, and that the console has no errors.
+- Lint passes with no problems (F04).
+- Build: it builds in under 1 s; the main script is 285 KB (89 KB zipped). The secret scan of the built files finds
+  nothing (S01).
+- Backend suite: 607 of 607 still pass. The first run had 2 failures because the container had restarted and Docker was down; after Docker was started, the whole suite was run again and passed.
+
+Not done here:
+- **FE0-B01 in Firefox.** Only Chromium is installed on the build machine, and downloading browsers is not allowed
+  there. The same tests run in Firefox with `E2E_FIREFOX=1 npm run test:e2e` on a machine that has it
+  (`npx playwright install firefox`).
+- **FE0-F03 on the built files.** The address could not be checked in the bundle yet: nothing sends requests in FE0,
+  so the bundler leaves the unused setting out. `check-build.mjs` takes the expected address and checks the bundle once
+  the API client exists (FE1).
+
+Decisions made where the design docs were silent (please check):
+1. Styling: plain CSS with the design tokens as CSS variables, with no component or CSS library. The screens
+   define every colour and size, so a library would add weight without helping.
+2. Fonts: Inter and JetBrains Mono are packaged with the app (`@fontsource`), not loaded from Google: no request to
+   another site, and they also work offline.
+3. JavaScript (`.js`/`.jsx`), not TypeScript, as the file names in 05 (client.js, App.jsx) show.
+4. Exact versions are pinned: React 19.3.1, React Router 7.18.4, TanStack Query 5.104.5, Vite 8.3.5, Vitest 5.0.5,
+   MSW 2.15.0 (for FE1), ESLint 10. Playwright is 1.56.1, the version of the Chromium installed here. jsdom is
+   29.1.1, because jsdom 30 needs Node 22.22.2 or newer.
+5. Ports: dev server 5173 (the FRONTEND_URL and CORS default of the backend), preview 4173.
+6. The screen designs are kept in the repository (`design/screens/`), so every later phase can be checked against them.
 
 ---
 
