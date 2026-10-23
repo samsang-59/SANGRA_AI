@@ -65,10 +65,7 @@ class AgentRunner:
         except Exception:
             logger.exception("Run %s: the agent failed with an unexpected error", run_id)
             # The run must never stay active forever: end it as failed (does nothing if it already ended).
-            try:
-                await self.progress.finish(run_id, "failed", "internal_error")
-            except Exception:
-                logger.exception("Run %s: could not finalize after the error", run_id)
+            await self._finish_after_error(run_id)
         finally:
             # The after-end steps (deleting the LangGraph snapshot of a finished run) run BEFORE the task is
             # forgotten, so nobody sees the run as idle while its snapshot still exists.
@@ -79,6 +76,24 @@ class AgentRunner:
                     logger.error("Run %s: an after-end step failed (%s)", run_id, type(exc).__name__)
             if self._tasks.get(run_id) is asyncio.current_task():
                 del self._tasks[run_id]
+
+    FINISH_RETRY_FIRST_SECONDS = 1.0
+    FINISH_RETRY_MAX_SECONDS = 30.0
+
+    async def _finish_after_error(self, run_id: int) -> None:
+        """Ends the run as failed. When that cannot be saved either (the database is down: the usual reason the
+        agent failed), it is tried again with growing pauses until the database is back (B11-R01). A server stop in
+        the meantime cancels this; startup recovery then ends the run."""
+        delay = self.FINISH_RETRY_FIRST_SECONDS
+        while True:
+            try:
+                await self.progress.finish(run_id, "failed", "internal_error")
+                return
+            except Exception as exc:
+                logger.error("Run %s: could not finalize after the error (%s); trying again in %.0f s",
+                             run_id, type(exc).__name__, delay)
+            await asyncio.sleep(delay)
+            delay = min(delay * 2, self.FINISH_RETRY_MAX_SECONDS)
 
     async def cancel(self, run_id: int, timeout: float = 10.0) -> None:
         """Stops the running task of a run (if any) and waits for it to end."""
