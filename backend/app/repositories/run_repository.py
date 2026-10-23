@@ -257,3 +257,76 @@ async def find_interrupted_runs(pool: AsyncConnectionPool, created_before) -> li
             "SELECT id, user_id, status FROM runs WHERE status = ANY(%s) AND created_at < %s ORDER BY id",
             (list(INTERRUPTED_STATUSES), created_before))
         return await cur.fetchall()
+
+
+async def set_workspace_ready(pool: AsyncConnectionPool, run_id: int, workspace_path: str, source_commit: str | None
+                              ) -> None:
+    """Records where the copy lives and, for GitHub, the exact commit that was cloned."""
+    async with pool.connection() as conn:
+        await conn.execute(
+            "UPDATE runs SET workspace_path = %s, source_commit = %s, updated_at = now() WHERE id = %s",
+            (workspace_path, source_commit, run_id))
+
+
+async def add_tokens(pool: AsyncConnectionPool, run_id: int, tokens: int) -> None:
+    async with pool.connection() as conn:
+        await conn.execute(
+            "UPDATE runs SET total_tokens = COALESCE(total_tokens, 0) + %s WHERE id = %s", (tokens, run_id))
+
+
+async def mark_workspace_deleted(pool: AsyncConnectionPool, run_id: int) -> None:
+    async with pool.connection() as conn:
+        await conn.execute(
+            "UPDATE runs SET workspace_deleted_at = now() WHERE id = %s AND workspace_deleted_at IS NULL", (run_id,))
+
+
+_CLAIM_APPLY_SQL = (
+    "UPDATE runs SET applied_to_source_at = now(), updated_at = now() "
+    "WHERE id = %s AND user_id = %s AND status = 'succeeded' AND applied_to_source_at IS NULL RETURNING " + RUN_COLUMNS
+)
+
+
+async def mark_applied_to_source(pool: AsyncConnectionPool, run_id: int, user_id: int) -> dict | None:
+    """Sets applied_to_source_at, only if the run succeeded and it is still empty (one conditional update, so two
+    clicks cannot both apply). None if not allowed."""
+    async with pool.connection() as conn:
+        cur = await conn.execute(_CLAIM_APPLY_SQL, (run_id, user_id))
+        return await cur.fetchone()
+
+
+async def clear_applied_to_source(pool: AsyncConnectionPool, run_id: int) -> None:
+    """Gives the claim back when applying failed (nothing was written)."""
+    async with pool.connection() as conn:
+        await conn.execute("UPDATE runs SET applied_to_source_at = NULL WHERE id = %s", (run_id,))
+
+
+async def find_old_workspaces(pool: AsyncConnectionPool, older_than_seconds: float, limit: int) -> list[dict]:
+    """Finished runs whose temporary copy was not deleted and is older than the limit (workspace cleanup)."""
+    async with pool.connection() as conn:
+        cur = await conn.execute(
+            "SELECT id, user_id, workspace_path FROM runs WHERE workspace_path IS NOT NULL "
+            "AND workspace_deleted_at IS NULL AND status = ANY(%s) "
+            "AND created_at < now() - make_interval(secs => %s) ORDER BY id LIMIT %s",
+            (list(FINAL_STATUSES), older_than_seconds, limit))
+        return await cur.fetchall()
+
+
+_UNFINISHED_CLEANUPS_SQL = (
+    "SELECT " + RUN_COLUMNS + " FROM runs WHERE workspace_path IS NOT NULL AND workspace_deleted_at IS NULL "
+    "AND status = ANY(%s) ORDER BY id"
+)
+
+
+async def find_unfinished_cleanups(pool: AsyncConnectionPool) -> list[dict]:
+    """Finished runs whose finish steps did not complete (the server stopped in the middle): the copy still exists.
+    Startup recovery completes them."""
+    async with pool.connection() as conn:
+        cur = await conn.execute(_UNFINISHED_CLEANUPS_SQL, (list(FINAL_STATUSES),))
+        return await cur.fetchall()
+
+
+async def active_run_ids(pool: AsyncConnectionPool) -> set[int]:
+    """The ids of every run still working or waiting (their temporary copies are never removed by the cleanup)."""
+    async with pool.connection() as conn:
+        cur = await conn.execute("SELECT id FROM runs WHERE status = ANY(%s)", (list(ACTIVE_STATUSES),))
+        return {row["id"] for row in await cur.fetchall()}

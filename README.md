@@ -7,7 +7,7 @@ You describe a bug in plain English. SANGRA_AI searches your code, finds the wro
 it undoes the change and tries again (up to 3 times). Your original code is never touched.
 
 > **Status:** implementation in progress, phase by phase (see [the plan](06_implementation_plan.md) and
-> [Implementation progress](#implementation-progress) below). Current phase: **B7 Docker test runner** (awaiting review).
+> [Implementation progress](#implementation-progress) below). Current phase: **B10 Finish, package, download, apply to my folder, cleanup** (awaiting review).
 
 ---
 
@@ -151,8 +151,11 @@ A phase is done only when all of its tests pass **and** all earlier tests still 
 | B4 Projects | Done (approved) | 46 of 46 pass |
 | B5 Runs, events, state rules, live stream (fake agent) | Done (approved) | 100 of 100 pass |
 | B6 Workspace manager and the 3 read-only code tools | Done (approved) | 61 of 61 pass |
-| B7 Docker test runner | Built, awaiting review | 24 of 24 pass (450 in total with B0 to B6); B7-M01 is manual (Windows) |
-| B8 to B11, FE0 to FE7 | Not started | |
+| B7 Docker test runner | Done (approved) | 24 of 24 pass; B7-M01 is manual (Windows), not done yet |
+| B8 LLM client and prompts | Done (approved) | 29 of 29 pass; B8-M01 and B8-Q01 (real Groq) not run yet |
+| B9 The LangGraph agent (11 steps, pause and resume, limits) | Done (approved) | 62 of 62 pass (541 in total with B0 to B8); B9-E01 (real Groq) not run yet |
+| B10 Finish, package, download, apply to my folder, cleanup | Built, awaiting review | 36 of 36 pass (577 in total with B0 to B9) |
+| B11, FE0 to FE7 | Not started | |
 
 ### Running the backend
 
@@ -388,8 +391,8 @@ Decisions made where the design docs were silent (please check):
 4. An accepted attempt keeps the status `waiting_for_approval` with `decision = accepted` until the agent applies it
    (the table has no `accepted` status).
 5. An odd `Last-Event-ID` (not a number, negative, too big) counts as 0: the whole diary is sent again.
-6. Until the agent exists (B9), the real app ends a started run at once as `failed` / `internal_error` with the summary
-   "The agent is not part of this build yet". Tests use the fake agent.
+6. Until the agent existed (B5 to B8), the app ended a started run at once as `failed` / `internal_error`. Since B9 the
+   real LangGraph agent runs every run.
 7. Startup recovery only ends runs created before this server process started and not run by it. If the database is down
    at startup, recovery is tried again in the background every 5 seconds.
 8. B5-C02 (Accept and Cancel at the same moment): a cancel is allowed while a run is `applying`, so when the Accept lands
@@ -437,8 +440,8 @@ Decisions made where the design docs were silent (please check):
 4. Search is case-insensitive for English letters (the bytes are lower-cased); non-English letters must match exactly.
    Binary files are recognised by a zero byte in the first 8 KB. Lines in tool answers are cut at 300 characters.
 5. Every tool answer is capped at 16,000 characters (setting `TOOL_OUTPUT_MAX_CHARS`). 200 lines of typical code fit;
-   200 lines of 100 characters do not, and the answer is cut from the end with `truncated: true`. The final number is
-   checked against the model's context in B8 (B8-X08).
+   200 lines of 100 characters do not, and the answer is cut from the end with `truncated: true`. B8-X08 confirmed
+   that 15 answers at this cap fit the model's context.
 6. Decided after review: when EVERY file of a zip sits inside one single top folder (as in GitHub's "Download ZIP",
    for example `repo-main/`), that folder is removed while unpacking, so the test command runs in the project root.
    A zip with files at the top, or with several top folders, is unpacked as it is.
@@ -488,6 +491,173 @@ Decisions made where the design docs were silent (please check):
 5. Internet is allowed inside test containers (MVP, as designed).
 6. In the cloud sandbox where this is developed, the network inspects TLS, so the TEST SUITE hands the sandbox's
    certificate to the test containers (`sandbox_network_extras()` in `tests/conftest.py`). The app does not do this.
+
+### B8: LLM client and prompts (notes)
+
+Built (in `app/agent/llm/`):
+- `client.py`: `GroqChatModel` (the Groq SDK; a client is built from the settings for each call) and `LLMClient`
+  (retries rate limits, server errors, timeouts and dropped connections up to 3 times, waiting 1 s, 2 s, 4 s; then
+  `LLMError`, which ends a run as `llm_error`; a wrong API key or a refused request is not retried). It adds up the
+  tokens. Logs hold only metadata: never prompts, replies, code or the API key.
+- `prompts/`: the prompts as plain text files (`investigate_system`, `investigate_user`, `propose_system`,
+  `propose_user`), filled in with `string.Template`. They tell the model that the bug text, hints and code are data,
+  not instructions.
+- `investigation.py`: the investigate loop. The model may call only `search_files`, `search_in_file` and
+  `read_file_lines`, at most 15 times per pass. Any other tool or bad arguments get an error back and the loop goes on.
+  The model ends with a fixed JSON answer (`found` / `not_found` with the places). Each place is checked against the
+  real file and its current lines are attached. Only this compact result is kept (the chat is not).
+- `proposal.py` and `parsing.py`: propose_fix (one call, no tools) and the parser of the fixed answer format
+  (explanation + edits: file, line range, old_code, new_code, reason). An answer that cannot be read gets one more
+  try with the reason; after that it is a failed proposal, never a crash. The parser checks only the shape; whether
+  the edits match the files is checked in B9.
+
+Test results: `tests/test_b8_llm.py`, 29 tests, all pass, using a scripted FakeLLM and a local fake Groq server that
+answers with real HTTP errors (429, 500, 401, a dropped connection, no answer at all) to the real Groq SDK. Numbers:
+with 15 tool answers at the size cap, the largest investigation prompt is about 89,000 tokens, below the 122,880
+tokens left before the reply (B8-X08); 20 parallel LLM calls of 0.2 s each finish in under 0.6 s (B8-C01).
+
+**Not run yet (manual, [M]):** B8-M01 (three real Groq calls on the Amazon discount example) and B8-Q01 (the quality
+benchmark on 10 seeded bugs). This cloud environment's network policy blocks `api.groq.com`, and they also need a
+Groq API key. To run them here: allow `api.groq.com` in the environment's Network access settings and provide the key
+as an environment secret (`GROQ_API_KEY`); or run them on your own machine.
+
+Decisions made where the design docs were silent (please check):
+1. The investigation ends with a fixed JSON answer (`outcome`, `findings`, `summary`; at most 5 places of at most 60
+   lines). When the 15 tool calls are used up, the model gets one last call without tools to give that answer; if it
+   cannot, the outcome is `not_found`. A `found` answer whose places do not exist counts as `not_found`.
+2. An answer with a little text or a ```json fence around the JSON is accepted. An answer without readable JSON
+   (a refusal, prose in another language) is a failed proposal.
+3. Settings: replies are at most 8,192 tokens, a call may take at most 60 s, and the model's context is taken as
+   131,072 tokens (`LLM_CONTEXT_TOKENS`). **That context size could not be checked against Groq's documentation from
+   here (blocked).**
+4. Token counting for B8-X08 uses a cautious estimate (3 characters per token) because the tokenizer files cannot be
+   downloaded from this environment. Real counts come from Groq's own `usage` numbers at run time.
+5. The tool answer size cap stays at 16,000 characters (the open question from B6): 15 answers at the cap fit.
+
+### B9: The LangGraph agent (notes)
+
+Built (in `app/agent/`):
+- `graph.py`: the fixed flow of section 6.2 with the 11 steps; `nodes/steps.py`: the steps themselves; `state.py`: the
+  small state of section 6.3 (no counters, no chat, no whole files); `edits.py`: the edit checker shared by
+  check_proposal, apply_edits (all or nothing, each file written through a temporary file and an atomic rename) and,
+  in B10, "Apply to my folder"; `workflow.py`: start and resume through LangGraph with the Postgres checkpointer
+  (its own connections); `fakes.py`: the scripted LLM and test runner for test setups (Gaps #10).
+- The AgentRunner now runs this graph. Each pause is a "request" step (does the work) followed by a "wait" step that only
+  pauses; after a resume the decision and the hint are read from the database, never from the resume value.
+- When a run ends (agent, cancel, timeout or restart), in this order: anything still changed is undone (unless the run
+  succeeded), the temporary copy is deleted (`workspace_deleted_at`), and the LangGraph snapshot is deleted (by the
+  runner after the graph has ended, or at once if no graph runs for the run). B10 adds the package before the copy
+  is deleted. Deleting a run or a project also deletes its LangGraph rows.
+- `python -m app.migrate` now also creates LangGraph's own tables (its `setup()` call).
+
+Checked at implementation (the open items of section 6.7):
+- When LangGraph resumes, the paused step starts again from its first line (confirmed against Postgres), so the
+  request/wait split is needed and works: the approval event and the status change happen once per pause (B9-R01).
+- `adelete_thread(thread_id)` removes every LangGraph row of a run. Resuming a thread that has no paused snapshot would
+  start the graph again from the top with an empty state, so the workflow refuses that (B9-C04).
+
+Test results: `tests/test_b9_agent.py` (43) and `tests/test_b9_agent_recovery.py` (19), 62 tests, all pass, three
+runs in a row. They use the real graph and the real Postgres checkpointer with a FakeLLM and a FakeTestRunner, plus one
+full run with the real workspace and the real Docker runner: the Amazon discount example as a Maven project, the
+baseline fails on the 5% bug, the approved fix passes the tests, the run succeeds. Numbers: 50 runs paused at approval
+leave 0 running tasks and use about 19 KB of saved state each (B9-L01, B9-L04); 20 runs at the same time keep the event
+loop delay at 16 ms at most (B9-L02); 100 runs in a row leave no tasks, snapshots or folders behind (B9-L03).
+
+Fixed during this phase (found by the tests):
+1. B9-X11: after an error inside a step, a LangGraph save running in the background could land after the snapshot was
+   deleted. The graph now saves every checkpoint before going on (`durability="sync"`).
+2. The AgentRunner forgot a finished task before deleting its snapshot, so for a moment a run looked idle while its
+   snapshot still existed. It now deletes first, then forgets the task.
+
+**Not run yet (manual):** B9-E01 (the same happy path with the real Groq), for the same reason as B8-M01: `api.groq.com`
+is blocked here and a key is needed.
+
+Decisions made where the design docs were silent (please check):
+1. Stop reasons for a baseline that cannot run: `baseline_could_not_run` when the test command was not found or the
+   tests ran too long, `test_runner_error` when Docker could not run them. A baseline whose tests FAIL is normal (that is
+   usually the bug) and the run goes on.
+2. How old_code is compared (section 6.7): line by line without the line endings (so Windows files work), everything
+   else exactly (spaces and tabs count); one newline at the end of old_code is ignored. New lines keep the file's own
+   line ending. "Changed lines" = lines removed + lines added. Files in generated folders cannot be edited.
+3. A proposal that cannot be read counts as one failed check (3 in a row: `proposal_invalid`), like a proposal that
+   fails the checks. The problems, with the real lines of the file, go back to the LLM.
+4. The edits of an attempt are saved per file from the bottom up (section 6.4 step 6).
+5. Gaps #10 is built in its simplest form: `AGENT_TEST_MODE=fake` with `AGENT_FAKE_SCRIPT` (a JSON file with the LLM
+   answers and the test results, used in order and then from the top again) and `MAILER_MODE=file` with `MAIL_FILE`.
+   Both are refused in deployed mode. The browser tests (FE7) may need more from them.
+6. The run detail events for steps use the existing event types: `tool_called` for each tool call, `tool_result` for
+   "found N places", "a fix was drafted" and "applied N edits in M files", `error` for clear failure messages.
+
+### B10: Finish, package, download, apply to my folder, cleanup (notes)
+
+Built:
+- `app/runners/finalizer.py`: builds the download package of a finished run. It holds `summary.md` (from a template:
+  status, the reason in plain words, the bug, the tests before and after each attempt, the attempts) and the full test
+  logs (`logs/baseline.log`, `logs/attempt_<n>.log`). A succeeded run also gets `changes.patch` (git diff of the copy)
+  and `fixed_files/<path>` (only the changed files). Other endings get `attempts.md` (every attempt with its edits,
+  decision and result). Never the whole project. Zip names are built only from fixed names and the edits' relative
+  paths; a name with `..`, an absolute part, a backslash or a null byte is never written, and a source file outside the
+  copy is never read. The zip is written to a temporary file and renamed.
+- `app/services/package_service.py`: builds the package and saves its row (expires 7 days later). At most one package
+  per run. If building fails, the run still finishes with its final status, an `error` event says the package is
+  missing, and the changes stay visible in the run detail.
+- The finish order (04_backend_design.md 6.4 step 11): undo what is still changed (unless the run succeeded), build the
+  package, save the final status (its `status_changed` event is the last event), delete the copy, delete the LangGraph
+  snapshot. A cancel saves the stopped status first (as `cancel_run` says), then stops the agent, undoes, builds the
+  package and deletes the copy. A per-run lock makes a cancel and the graph's own finish at the same moment end the run
+  once, with one package.
+- Startup recovery also completes finishes that were cut off: a finished run whose copy still exists gets its missing
+  package and its copy deleted.
+- `GET /runs/{id}/package`: streams the file in 64 KB chunks with `Content-Disposition` and `Content-Length`. The file
+  is opened before the answer starts, so a cleanup that deletes it during a download cannot break that download.
+- `POST /runs/{id}/apply-to-source`: local mode and local folder projects only, succeeded runs only, once. The run is
+  claimed first with one conditional update, so two clicks at once write once. The same edits are checked again against
+  the user's folder (the exact old lines must still be there). All edits are checked before anything is written; if
+  one file then cannot be written, the files already written are put back.
+- Cleanup jobs (every `CLEANUP_INTERVAL_SECONDS`, default 1 hour):
+  - expired packages, in batches (file deleted, then `deleted_at` set);
+  - copies of finished runs older than 24 hours (`workspace_deleted_at` set), and run folders older than 24 hours that
+    belong to no active run (left behind by a deleted run);
+  - package files that no row points to any more, at least 1 hour old;
+  - email tokens that expired more than 24 hours ago.
+  A file that cannot be deleted is logged and tried again next time; one failing job does not stop the others.
+
+Test results: `tests/test_b10_package.py`, 36 tests, all pass. B5-S01 now also checks the package and apply routes
+(another user gets 404). Full suite: 577 of 577 pass (B0 to B10).
+Numbers: 10,000 expired packages cleaned in about 1.1 s in batches of 500, `/health` at most 13 ms during it
+(B10-L01); a 50 MB download takes 0.17 s and the server's peak memory grows by about 1 MB (B10-L02); 20 parallel 2 MB
+downloads in 0.27 s (B10-L03); 50 runs finishing at the same moment give 50 packages, each in its user's folder with
+its own summary, total disk use equal to the stored sizes (B10-L04).
+
+Fixed during this phase (found by the tests):
+1. B10-S02: an edit with an absolute path (`/etc/passwd`) passed the zip-name check (it became
+   `fixed_files/etc/passwd`) and the file would have been read from outside the copy. Absolute parts are now refused
+   and the source file must be inside the copy.
+2. B10-L01: the first version deleted and marked one package at a time (18 s for 10,000). Each batch now deletes its
+   files in one thread call and marks them with one statement.
+3. B9-L02 (20 runs at the same time) failed in the full run at 104 ms (limit 100 ms; it was 16 ms in B9). The cause was
+   a full garbage-collector pass of about 100 ms, not our code. B10 creates more objects, so a pass now fell inside the
+   measured window. The app now calls `gc.freeze()` once startup is done: the objects loaded at startup stay
+   until shutdown anyway, so the collector stops scanning them. The worst delay is back to 15 to 27 ms. Packages are
+   also built in a small pool of their own (2 threads), so many runs finishing at once wait their turn instead of
+   filling the shared thread pool.
+
+Decisions made where the design docs were silent (please check):
+1. Package files are stored at `PACKAGES_DIR/<user_id>/run_<run_id>.zip`; the download name is `sangra-run-<id>.zip`.
+2. A normal finish builds the package before the final status is saved (as 6.4 step 11 lists it); a cancel saves the
+   final status first (as `cancel_run` lists it).
+3. B10-R02: if the server stops after the package was built but before the final status, startup recovery ends the run
+   as `failed` (`server_restarted`) like any interrupted run, and keeps the package already built (no second package).
+   That package's summary then still describes the run as it was about to end.
+4. A new error code `SOURCE_NOT_WRITABLE` (409) for "Apply to my folder" when a file is read-only or cannot be written;
+   nothing is changed. A deleted original file is reported as `SOURCE_CHANGED`. Windows line endings are kept.
+5. If applying fails (`SOURCE_CHANGED` or `SOURCE_NOT_WRITABLE`), `applied_to_source_at` is cleared again, so the user
+   can fix the folder and try once more.
+6. "Apply to my folder" also needs the package to be available (`PACKAGE_EXPIRED` after 7 days), as B10-X04 asks.
+7. Cleanup ages and sizes: copies older than `WORKSPACE_MAX_AGE_HOURS` (24); orphan package files at least 1 hour old
+   (so a package being built is never taken); email tokens removed 24 hours after they expired
+   (`TOKEN_RETENTION_HOURS`); batches of 500 (`CLEANUP_BATCH_SIZE`). The run detail shows a package as not available
+   once it is expired, even before the cleanup job has deleted it.
 
 ---
 

@@ -1,6 +1,8 @@
 """Run controller (Layer 3): ONE service call, Result -> HTTP response. Also the live stream (SSE) format."""
 
+import asyncio
 import json
+import os
 import time
 from collections.abc import AsyncIterator
 
@@ -11,6 +13,7 @@ from pydantic import ValidationError
 from starlette.datastructures import UploadFile
 
 from app.core.responses import encode_value, from_result
+from app.core.result import Result
 from app.services import run_service
 from app.services.run_service import RunContext
 from app.validators.run import ApprovalRequest, HintRequest, RunListQuery, StartRunRequest
@@ -141,3 +144,34 @@ async def cancel(request: Request, run_id: int, user: dict) -> JSONResponse:
 
 async def delete(request: Request, run_id: int, user: dict) -> JSONResponse:
     return from_result(await run_service.delete_run(_ctx(request), user, run_id))
+
+
+DOWNLOAD_CHUNK = 64 * 1024
+
+
+async def package(request: Request, run_id: int, user: dict):
+    """The package file. It is opened before the answer starts and then streamed in chunks: memory stays flat, and a
+    cleanup that deletes the file meanwhile cannot break a download already under way."""
+    result = await run_service.get_package(_ctx(request), user, run_id)
+    if not result.ok:
+        return from_result(result)
+    try:
+        handle = await asyncio.to_thread(open, result.data["path"], "rb")
+    except OSError:  # deleted by hand or by the cleanup meanwhile
+        return from_result(Result.failure("PACKAGE_EXPIRED", "The package file is no longer available."))
+    size = os.fstat(handle.fileno()).st_size
+
+    async def chunks() -> AsyncIterator[bytes]:
+        try:
+            while chunk := await asyncio.to_thread(handle.read, DOWNLOAD_CHUNK):
+                yield chunk
+        finally:
+            handle.close()
+
+    return StreamingResponse(chunks(), media_type="application/zip", headers={
+        "Content-Disposition": f'attachment; filename="{result.data["filename"]}"',
+        "Content-Length": str(size)})
+
+
+async def apply_to_source(request: Request, run_id: int, user: dict) -> JSONResponse:
+    return from_result(await run_service.apply_to_source(_ctx(request), user, run_id))

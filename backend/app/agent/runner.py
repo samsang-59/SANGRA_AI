@@ -5,8 +5,7 @@ by services after an approval or a hint); cancel(run_id) stops the running task.
 (normally, by an unexpected error, or by cancel) the runner finalizes the run on errors, calls the
 after-end hooks (B9: delete the LangGraph snapshots) and forgets the task.
 
-The workflow is given from outside: the LangGraph graph from B9. Until then (and in tests) another
-workflow can be plugged in.
+The workflow is given from outside: the LangGraph graph (app/agent/workflow.py); tests can plug in another one.
 """
 
 import asyncio
@@ -26,21 +25,6 @@ class Workflow(Protocol):
     async def start(self, run_id: int) -> None: ...
 
     async def resume(self, run_id: int, value: Any) -> None: ...
-
-
-class AgentNotAvailableWorkflow:
-    """Used until the LangGraph agent exists (phase B9): a started run ends at once with a clear summary,
-    so it never blocks the user's one active run."""
-
-    def __init__(self, progress: RunProgress):
-        self._progress = progress
-
-    async def start(self, run_id: int) -> None:
-        await self._progress.finish(run_id, "failed", "internal_error",
-                                    "The agent is not part of this build yet (it comes in phase B9).")
-
-    async def resume(self, run_id: int, value: Any) -> None:
-        await self.start(run_id)
 
 
 class AgentRunner:
@@ -86,13 +70,15 @@ class AgentRunner:
             except Exception:
                 logger.exception("Run %s: could not finalize after the error", run_id)
         finally:
-            if self._tasks.get(run_id) is asyncio.current_task():
-                del self._tasks[run_id]
+            # The after-end steps (deleting the LangGraph snapshot of a finished run) run BEFORE the task is
+            # forgotten, so nobody sees the run as idle while its snapshot still exists.
             for hook in self.after_end_hooks:
                 try:
                     await hook(run_id)
                 except Exception as exc:
                     logger.error("Run %s: an after-end step failed (%s)", run_id, type(exc).__name__)
+            if self._tasks.get(run_id) is asyncio.current_task():
+                del self._tasks[run_id]
 
     async def cancel(self, run_id: int, timeout: float = 10.0) -> None:
         """Stops the running task of a run (if any) and waits for it to end."""

@@ -84,3 +84,13 @@ async def poll_for_stream(
         if row["sequence_number"] is not None
     ]
     return rows[0]["status"], events
+
+
+async def latest_hint(pool: AsyncConnectionPool, run_id: int) -> str | None:
+    """The text of the newest hint the user sent (the agent reads it from the database, not from the resume value)."""
+    async with pool.connection() as conn:
+        cur = await conn.execute(
+            "SELECT details FROM run_events WHERE run_id = %s AND event_type = 'hint_received' "
+            "ORDER BY sequence_number DESC LIMIT 1", (run_id,))
+        row = await cur.fetchone()
+        return (row["details"] or {}).get("hint") if row else None

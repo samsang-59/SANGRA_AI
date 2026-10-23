@@ -97,11 +97,41 @@ class Settings(BaseSettings):
     test_container_user: str = Field(default="auto", pattern=r"^(auto|[1-9][0-9]*(:[0-9]+)?)$")
     test_log_excerpt_chars: int = Field(default=8000, gt=0)
 
+    # LLM (Groq): retries with waiting on rate limits, server errors, timeouts and dropped connections
+    # (04_backend_design.md 6.5 item 6: up to 3); the time limit and the reply size per call; the investigate
+    # limit (15 tool calls per pass); the model's context size, used to check the prompts fit.
+    llm_max_retries: int = Field(default=3, ge=0)
+    llm_retry_base_seconds: float = Field(default=1.0, ge=0)
+    llm_timeout_seconds: float = Field(default=60.0, gt=0)
+    llm_max_output_tokens: int = Field(default=8192, gt=0)
+    investigate_max_tool_calls: int = Field(default=15, gt=0)
+    llm_context_tokens: int = Field(default=131_072, gt=0)
+
+    # Proposal checks (04_backend_design.md 6.4 step 6 and 6.6): at most 10 edits and 300 changed lines per attempt,
+    # and the run fails after 3 invalid proposals in a row.
+    max_edits_per_attempt: int = Field(default=10, gt=0)
+    max_changed_lines: int = Field(default=300, gt=0)
+    max_proposal_checks: int = Field(default=3, gt=0)
+
+    # Test setups only (Gaps #10): "fake" replaces the LLM and the Docker test runner with scripted ones read from
+    # AGENT_FAKE_SCRIPT (a JSON file), so browser tests behave the same every time. Refused in deployed mode.
+    agent_test_mode: Literal["off", "fake"] = "off"
+    agent_fake_script: Path | None = None
+    # MAILER_MODE=file writes every email to MAIL_FILE (test setups only, refused in deployed mode).
+    mail_file: Path | None = None
+
+    # Packages and cleanup (04_backend_design.md 6.4 step 11 and "Background jobs"): a package is kept 7 days; the
+    # cleanup jobs run every hour, in batches; used or expired email tokens are removed a day after they expired.
+    package_expiry_days: int = Field(default=7, gt=0)
+    cleanup_interval_seconds: float = Field(default=3600.0, gt=0)
+    cleanup_batch_size: int = Field(default=500, gt=0)
+    token_retention_hours: int = Field(default=24, ge=0)
+
     # Passwords: bcrypt cost (each +1 doubles the time; 12 is about 0.25 s per hash).
     bcrypt_rounds: int = Field(default=12, ge=4, le=16)
 
     # Mailer (Layer 7, item 8): "console" prints the email in the terminal (development), "smtp" sends it.
-    mailer_mode: Literal["console", "smtp"] = "console"
+    mailer_mode: Literal["console", "smtp", "file"] = "console"
     mail_from: str = "SANGRA_AI <no-reply@localhost>"
     smtp_host: str | None = None
     smtp_port: int = Field(default=587, gt=0, lt=65536)
@@ -178,6 +208,12 @@ class Settings(BaseSettings):
     def _check_smtp(self) -> "Settings":
         if self.mailer_mode == "smtp" and not self.smtp_host:
             raise ValueError("SMTP_HOST is required when MAILER_MODE is smtp")
+        if self.mailer_mode == "file" and self.mail_file is None:
+            raise ValueError("MAIL_FILE is required when MAILER_MODE is file")
+        if self.agent_test_mode == "fake" and self.agent_fake_script is None:
+            raise ValueError("AGENT_FAKE_SCRIPT is required when AGENT_TEST_MODE is fake")
+        if self.app_mode == "deployed" and (self.agent_test_mode != "off" or self.mailer_mode == "file"):
+            raise ValueError("AGENT_TEST_MODE=fake and MAILER_MODE=file are for test setups and are refused in deployed mode")
         return self
 
     def secret_values(self) -> list[str]:

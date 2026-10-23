@@ -38,6 +38,9 @@ class FakeWorkflow:
         self.active = 0
         self.max_active = 0
 
+    async def delete_snapshots(self, run_id: int) -> None:
+        """The fake keeps no LangGraph snapshots."""
+
     async def _step(self) -> None:
         await asyncio.sleep(self.delay)
 

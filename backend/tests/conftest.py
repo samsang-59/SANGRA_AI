@@ -159,6 +159,9 @@ def migrated_database() -> str:
         conn.execute("DROP SCHEMA public CASCADE")
         conn.execute("CREATE SCHEMA public")
     run_migrations(TEST_DATABASE_URL)
+    from app.agent.workflow import setup_langgraph_tables
+
+    setup_langgraph_tables(TEST_DATABASE_URL)
     return TEST_DATABASE_URL
 
 
@@ -170,6 +173,8 @@ async def db(migrated_database: str):
 
     conn = await psycopg.AsyncConnection.connect(migrated_database, autocommit=True, row_factory=dict_row)
     await conn.execute(f"TRUNCATE {', '.join(OUR_TABLES)} RESTART IDENTITY CASCADE")
+    # Run ids start again at 1, so LangGraph's rows (keyed by the run id) are emptied too.
+    await conn.execute("TRUNCATE checkpoints, checkpoint_blobs, checkpoint_writes")
     try:
         yield conn
     finally:

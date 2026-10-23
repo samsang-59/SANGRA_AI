@@ -132,3 +132,53 @@ async def list_with_edits(pool: AsyncConnectionPool, run_id: int) -> list[dict]:
     for edit in edits:
         by_attempt.setdefault(edit["attempt_id"], []).append(edit)
     return [{**attempt, "edits": by_attempt.get(attempt["id"], [])} for attempt in attempts]
+
+
+_MARK_STATUS_SQL = {
+    "applied": "UPDATE attempts SET status = 'applied', applied_at = now(), updated_at = now() "
+               "WHERE id = %s RETURNING " + ATTEMPT_COLUMNS,
+    "tests_passed": "UPDATE attempts SET status = 'tests_passed', updated_at = now() WHERE id = %s RETURNING "
+                    + ATTEMPT_COLUMNS,
+    "tests_failed": "UPDATE attempts SET status = 'tests_failed', updated_at = now() WHERE id = %s RETURNING "
+                    + ATTEMPT_COLUMNS,
+}
+_FIND_ATTEMPT_SQL = "SELECT " + ATTEMPT_COLUMNS + " FROM attempts WHERE id = %s AND run_id = %s"
+_EDITS_OF_SQL = "SELECT " + EDIT_COLUMNS + " FROM file_edits WHERE attempt_id = %s ORDER BY edit_order"
+
+
+async def mark_attempt_status(pool: AsyncConnectionPool, attempt_id: int, status: str) -> dict | None:
+    """applied (records applied_at) / tests_passed / tests_failed."""
+    async with pool.connection() as conn:
+        cur = await conn.execute(_MARK_STATUS_SQL[status], (attempt_id,))
+        return await cur.fetchone()
+
+
+async def set_reverted_at(pool: AsyncConnectionPool, attempt_id: int) -> None:
+    """Records an undo (the attempt keeps its status tests_failed)."""
+    async with pool.connection() as conn:
+        await conn.execute("UPDATE attempts SET reverted_at = now(), updated_at = now() WHERE id = %s", (attempt_id,))
+
+
+async def find_with_edits(pool: AsyncConnectionPool, run_id: int, attempt_id: int) -> dict | None:
+    """One attempt of a run with its edits (in their saved order)."""
+    async with pool.connection() as conn:
+        cur = await conn.execute(_FIND_ATTEMPT_SQL, (attempt_id, run_id))
+        attempt = await cur.fetchone()
+        if attempt is None:
+            return None
+        cur = await conn.execute(_EDITS_OF_SQL, (attempt_id,))
+        return {**attempt, "edits": await cur.fetchall()}
+
+
+_SUCCESSFUL_EDITS_SQL = (
+    "SELECT e.id, e.attempt_id, e.file_path, e.start_line, e.end_line, e.old_code, e.new_code, e.edit_order, "
+    "e.explanation FROM file_edits e JOIN attempts a ON a.id = e.attempt_id "
+    "WHERE a.run_id = %s AND a.status = 'tests_passed' ORDER BY e.edit_order"
+)
+
+
+async def find_successful_edits(pool: AsyncConnectionPool, run_id: int) -> list[dict]:
+    """The edits of the attempt that passed the tests ("Apply to my folder")."""
+    async with pool.connection() as conn:
+        cur = await conn.execute(_SUCCESSFUL_EDITS_SQL, (run_id,))
+        return await cur.fetchall()

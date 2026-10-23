@@ -1,0 +1,13 @@
+Bug report:
+$bug_description
+
+Hints from the user (newest last):
+$hints
+
+Test run before any change (baseline):
+$baseline_summary
+
+Searches already made in earlier passes (do not repeat them):
+$search_terms_tried
+
+Find the code that causes this bug.

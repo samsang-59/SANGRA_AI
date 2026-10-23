@@ -25,8 +25,9 @@ def free_port() -> int:
 
 
 @contextmanager
-def running_server(env: dict[str, str], cwd: Path):
-    """Starts `python -m app` with these settings and waits until /health answers 200. Yields the port."""
+def running_server(env: dict[str, str], cwd: Path, with_process: bool = False):
+    """Starts `python -m app` with these settings and waits until /health answers 200. Yields the port (or the port
+    and the process, with_process=True)."""
     port = free_port()
     full_env = {k: v for k, v in os.environ.items() if k.upper() not in env}
     full_env.update(env)
@@ -44,7 +45,7 @@ def running_server(env: dict[str, str], cwd: Path):
             if not healthy:
                 time.sleep(0.2)
         assert healthy, "the server did not become healthy (is the test database up?)"
-        yield port
+        yield (port, proc) if with_process else port
     finally:
         proc.terminate()
         proc.communicate(timeout=20)
