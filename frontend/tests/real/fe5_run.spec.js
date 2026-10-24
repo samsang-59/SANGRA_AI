@@ -1,5 +1,6 @@
 // FE5-F11 against the real backend (scripted agent, run with `npm run test:real`): a complete run followed on the Run
-// page: events, a hint, a rejected fix, an accepted fix, success.
+// page: events, a hint, a rejected fix, an accepted fix, success. Then FE6 on the real result: tests, attempts,
+// download, apply to my folder, delete.
 import { readFileSync } from "node:fs";
 import { expect, test } from "@playwright/test";
 
@@ -69,6 +70,25 @@ test("FE5-F11: a complete run with the scripted agent: events, hint, reject, acc
 
   // The end: the result view.
   await expect(page.getByRole("heading", { name: "Tests passed" })).toBeVisible({ timeout: 30_000 });
-  await expect(page.locator(".result-card .badge")).toContainText("succeeded");
+  await expect(page.locator(".run-result .badge")).toContainText("succeeded");
   await expect(page.getByRole("button", { name: "cancel run" })).toHaveCount(0);
+
+  // FE6 on the real data: the tests, the attempts, the download, "apply to my folder", delete.
+  await expect(page.getByRole("region", { name: "baseline (before any change)" })).toContainText("failed");
+  await expect(page.getByRole("region", { name: "after fix (attempt #2)" })).toContainText("passed");
+  await expect(page.getByRole("article")).toHaveCount(2);
+  await expect(page.getByRole("article", { name: "attempt #1" })).toContainText("your feedback › It must be exactly 10 percent, not 15.");
+  const [download] = await Promise.all([page.waitForEvent("download"),
+    page.getByRole("button", { name: "download package" }).click()]);
+  expect(download.suggestedFilename()).toMatch(/^sangra-run-\d+\.zip$/);
+  expect(readFileSync(await download.path()).subarray(0, 2).toString()).toBe("PK");
+  const file = `${process.env.REAL_PROJECT_DIR}/src/main/java/shop/Discount.java`;
+  expect(readFileSync(file, "utf8")).toContain("return 0.05;"); // the folder is untouched until "apply"
+  await page.getByRole("button", { name: "apply to my folder" }).click();
+  await expect(page.getByRole("button", { name: "applied" })).toBeDisabled();
+  expect(readFileSync(file, "utf8")).toContain("return 0.10;");
+  await page.getByRole("button", { name: "delete run" }).click();
+  await page.getByRole("alertdialog").getByRole("button", { name: "delete run" }).click();
+  await expect(page).toHaveURL(/\/runs$/);
+  await expect(page.getByText("No runs yet")).toBeVisible();
 });

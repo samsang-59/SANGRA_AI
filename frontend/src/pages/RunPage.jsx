@@ -1,5 +1,5 @@
 // The Run page (05_frontend_design.md F6), /runs/:runId. It works from two sources: the run record (useRun) and the
-// live events (useRunStream). Active runs show the live view; ended runs show the result view (FE6 completes it).
+// live events (useRunStream). Active runs show the live view; ended runs show the result view.
 import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
@@ -8,12 +8,13 @@ import ApprovalBox from "../components/ApprovalBox.jsx";
 import ConfirmDialog from "../components/ConfirmDialog.jsx";
 import EventTimeline from "../components/EventTimeline.jsx";
 import HintBox from "../components/HintBox.jsx";
+import ResultView from "../components/ResultView.jsx";
 import { Notice, Spinner } from "../components/Status.jsx";
 import StatusBadge from "../components/StatusBadge.jsx";
 import { messageFor } from "../errors.js";
 import { keys, useProject, useRun } from "../hooks/queries.js";
 import { useRunStream } from "../hooks/useRunStream.js";
-import { ACTIVE_STATUSES, STATUS_LABELS, formatDate, stopReasonText } from "../runStatus.js";
+import { ACTIVE_STATUSES, STATUS_LABELS, formatDate } from "../runStatus.js";
 import NotFoundPage from "./NotFoundPage.jsx";
 
 const WAITING = ["waiting_for_approval", "waiting_for_hint"];
@@ -73,19 +74,6 @@ function LiveView({ run, onStale }) {
       </div>
       <div className="run-side">{log}</div>
     </div>
-  );
-}
-
-// The ended run: big badge, the reason in plain words and the summary. FE6 adds the tests, attempts and actions.
-function ResultView({ run }) {
-  return (
-    <section className={`card section-card result-card result-${run.status}`} aria-label="result">
-      <div className="row run-title">
-        <StatusBadge status={run.status} large />
-        <h1>{run.status === "succeeded" ? "Tests passed" : stopReasonText(run.stop_reason)}</h1>
-      </div>
-      {run.final_summary && <p className="result-summary">{run.final_summary}</p>}
-    </section>
   );
 }
 
@@ -178,7 +166,7 @@ export default function RunPage() {
       <p className="visually-hidden" aria-live="polite">Status: {run.status}. {STATUS_LABELS[run.status] ?? ""}</p>
       {runQuery.isError && <Notice kind="error">{messageFor(runQuery.error)}</Notice>}
       {staleMessage && <Notice kind="warning">{staleMessage}</Notice>}
-      {active ? <LiveView key={run.id} run={run} onStale={onStale} /> : <ResultView run={run} />}
+      {active ? <LiveView key={run.id} run={run} onStale={onStale} /> : <ResultView key={run.id} run={run} />}
     </main>
   );
 }

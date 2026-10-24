@@ -6,7 +6,7 @@ function lines(code) {
   return text.split("\n");
 }
 
-export default function CodeDiff({ edit }) {
+export default function CodeDiff({ edit, showReason = true }) {
   const oldLines = lines(edit.old_code ?? "");
   const newLines = lines(edit.new_code ?? "");
   return (
@@ -37,7 +37,7 @@ export default function CodeDiff({ edit }) {
           </div>
         ))}
       </div>
-      {edit.explanation && <p className="diff-reason">Reason: {edit.explanation}</p>}
+      {showReason && edit.explanation && <p className="diff-reason">Reason: {edit.explanation}</p>}
     </figure>
   );
 }

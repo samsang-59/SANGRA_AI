@@ -148,6 +148,25 @@ export function projectRoutes(state) {
       if (state.runReplies[action]) return state.runReplies[action](body, params.id);
       return state.runDetails[params.id] ? HttpResponse.json({ data: { message: "OK" } }) : notFound();
     }))),
+    http.post(api("/runs/:id/apply-to-source"), guard(({ params }) => {
+      if (state.runReplies.apply) return state.runReplies.apply(params.id);
+      const run = state.runDetails[params.id];
+      if (!run) return notFound();
+      run.applied_to_source_at = "2026-10-22T15:00:00Z";
+      return HttpResponse.json({ data: run });
+    })),
+    http.delete(api("/runs/:id"), guard(({ params }) => {
+      if (state.runReplies.delete) return state.runReplies.delete(params.id);
+      if (!state.runDetails[params.id]) return notFound();
+      delete state.runDetails[params.id];
+      return HttpResponse.json({ data: { id: Number(params.id), deleted: true } });
+    })),
+    http.get(api("/runs/:id/package"), guard(({ params }) => {
+      if (state.runReplies.package) return state.runReplies.package(params.id);
+      if (!state.runDetails[params.id]) return notFound();
+      return new HttpResponse(new Uint8Array([80, 75, 5, 6]), { headers: { "Content-Type": "application/zip",
+        "Content-Disposition": `attachment; filename="sangra-run-${params.id}.zip"` } });
+    })),
     http.post(api("/projects/:id/runs"), guard(async ({ params, request }) => {
       if (state.startReply) return state.startReply(request);
       if (!state.projects.find((p) => String(p.id) === params.id)) return notFound();

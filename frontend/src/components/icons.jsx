@@ -8,3 +8,12 @@ export const UserIcon = () => (
 export const MailIcon = () => (
   <svg {...base}><rect x="3" y="5" width="18" height="14" rx="2" /><path d="M3 7l9 6 9-6" /></svg>
 );
+export const DownloadIcon = () => (
+  <svg {...base}><path d="M12 4v11" /><path d="M7 10l5 5 5-5" /><path d="M5 20h14" /></svg>
+);
+export const CheckIcon = () => (
+  <svg {...base}><path d="M5 12.5l4.5 4.5L19 7.5" /></svg>
+);
+export const WarningIcon = () => (
+  <svg {...base}><path d="M12 4l9 16H3z" /><path d="M12 10v4" /><path d="M12 17.2v.1" /></svg>
+);

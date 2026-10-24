@@ -7,7 +7,7 @@ You describe a bug in plain English. SANGRA_AI searches your code, finds the wro
 it undoes the change and tries again (up to 3 times). Your original code is never touched.
 
 > **Status:** implementation in progress, phase by phase (see [the plan](06_implementation_plan.md) and
-> [Implementation progress](#implementation-progress) below). Current phase: **FE5 Run page, live view** (awaiting review). The backend (B0 to B11) is complete.
+> [Implementation progress](#implementation-progress) below). Current phase: **FE6 Run page, result view** (awaiting review). The backend (B0 to B11) is complete.
 
 ---
 
@@ -161,8 +161,9 @@ A phase is done only when all of its tests pass **and** all earlier tests still 
 | FE2 Auth state, guards and auth pages (register, login, verify, forgot, reset, account) | Done (approved) | 234 unit + 11 browser + 2 contract tests pass; backend 607 of 607 pass |
 | FE3 Projects pages (list, create, edit, delete) | Done (approved) | 282 unit + 17 browser + 2 contract tests pass (Chromium; Firefox blocked by the network policy); backend 607 of 607 pass |
 | FE4 Start run page and History page | Done (approved) | 317 unit + 23 browser + 2 contract tests pass (Chromium); backend 607 of 607 pass |
-| FE5 Run page, live view (timeline, hint, approval, cancel) | Built, awaiting review | 350 unit + 33 browser + 2 contract + 1 real-backend browser test pass (Chromium); backend 607 of 607 pass |
-| FE6 to FE7 | Not started | |
+| FE5 Run page, live view (timeline, hint, approval, cancel) | Done (approved) | 350 unit + 33 browser + 2 contract + 1 real-backend browser test pass (Chromium); backend 607 of 607 pass |
+| FE6 Run page, result view (tests, attempts, download, apply, delete) | Built, awaiting review | 400 unit + 39 browser + 2 contract + 1 real-backend browser test pass (Chromium); backend 607 of 607 pass (after the test fix below) |
+| FE7 Polish and full browser tests | Not started | |
 
 ### Open items (manual checks still to do)
 
@@ -1229,6 +1230,70 @@ Decisions made where the design docs were silent (please check):
    only answer with a whole body, which would end the stream at once); the real stream over the network is covered by
    the contract tests and FE5-F11.
 9. Long log lines wrap; code in a diff does not wrap and scrolls sideways inside its box.
+
+### FE6: Run page, result view (notes)
+
+Built (05_frontend_design.md F6 "Result view" and "Stop reason -> plain words"; the screens "runs id · result ·
+succeeded" and "runs id · result · failed"):
+- `src/components/ResultView.jsx`, shown on `/runs/:id` once the run has ended (it replaces FE5's short card):
+  - The result card: the big status badge, "Tests passed" or the stop reason in plain words (every reason of the F6
+    table; any other reason reads "Failed: a technical problem happened (details in the timeline)"), and the final
+    summary. When the run succeeded but the baseline had already passed, the warning "Tests passed, but no test
+    covers this bug, please verify the fix yourself" is shown under the summary.
+  - On the right: "apply to my folder" (only for a succeeded run of a local-path project that was not applied yet),
+    "download package" with "Package is kept for 7 days", and "delete run".
+  - Download: fetches the file with the token and saves it under the server's name (`sangra-run-41.zip`).
+    PACKAGE_EXPIRED shows "The package expired (kept 7 days)" and disables the button; a network failure shows the
+    message with "retry".
+  - Apply: on success the button becomes a disabled "✓ applied". SOURCE_CHANGED, LOCAL_PATH_NOT_ALLOWED,
+    RUN_STATE_INVALID, PACKAGE_EXPIRED and other errors show the backend's message under the card.
+  - Delete: a confirm box "Delete this run?", then the call, then the history.
+  - Each button sends one request at a time, even on a double click.
+- `src/components/TestResultPanel.jsx`: the baseline ("before any change") next to the after-fix result of the last
+  tested attempt ("after fix (attempt #2)"), each with its status, exit code, duration, Docker image and log. A
+  missing result shows "not available".
+- `src/components/AttemptList.jsx`: every attempt, newest first: "attempt #N reason · decision: … · reverted", its
+  status, the explanation, the feedback of a rejected fix, and every edit as old and new code (the same `CodeDiff` as
+  the approval box).
+- `src/runResult.js`: the shared rules (when "apply" is offered, the results to compare, the "no test covers" label).
+- Active runs keep the live view: they have "cancel run" and no "delete run".
+
+Test results:
+- Unit tests: 400 of 400 pass (50 new in `tests/unit/fe6_result.test.jsx`: F01 with a table of every stop reason
+  plus unknown ones, F02-F07, F05 as a table of 3 statuses x 3 source types x applied or not, X01-X06, S01, L01).
+- Browser tests (Chromium, dev and built app): 39 pass, 1 skipped by design. New (`tests/e2e/fe6_result.spec.js`):
+  the succeeded and failed screens (download saved as `sangra-run-41.zip`, apply, delete), and:
+  - FE6-L02: a 50 MB package. On the built app it is saved in about 4 s while the page keeps drawing (237 frames
+    during the download, the longest frame 33 ms).
+- FE6-L01: 3 attempts x 10 edits (900 diff lines) render in 224 ms with the whole app (limit 1 s).
+- Against the real backend (`npm run test:real`): after the FE5-F11 run, the result view shows the real baseline
+  (failed) and after-fix (passed) results, both attempts with the reject feedback; the package downloads as a real
+  zip; "apply to my folder" writes `return 0.10;` into the project folder (it was untouched before); delete goes to
+  an empty history. Passes.
+- Screenshots of both result screens were compared with the designs and match.
+- Lint: no problems. Build scan clean. Contract tests: 2 of 2 pass. Backend: 607 of 607 pass (after the test fix below).
+
+Decisions made where the design docs were silent (please check):
+1. The backend writes the "no test covers this bug" sentence into the final summary; the page takes it out of the
+   summary and shows it as the warning of the design, so it appears once. The warning is also shown if the summary
+   lacks it but the baseline passed.
+2. After a successful apply the button turns into a disabled "✓ applied" (FE6-F06). Opening the page later, an
+   applied run shows no apply button (the design's note "hidden once applied").
+3. The page does not show total_tokens (the screens do not show it).
+4. Missing data texts: "No summary available.", "not available" for a missing test result, "no test output" for an
+   empty log, "No package available", "No fix was proposed in this run." and "no edits".
+5. The attempts list shows the user's feedback of a rejected fix ("your feedback › …"); the edits there have no
+   "Reason:" line, as in the result screens.
+6. FE6-L01 is read as 3 attempts x 10 edits with 300 diff lines per attempt (900 lines in all), the same size as
+   FE5-L03 per attempt.
+7. Error messages of apply, download and delete are shown under the result card (the place of the design's
+   "messages on this page" row); that row and the grey notes on the screens are read as designer notes.
+
+Backend test fixed during this phase:
+- **B11-S07** ("upload limits") failed once in the full run: right after the run of the 100,000-file zip reached
+  its final status, the test found the temporary copy still on disk. The app was right: by the B10 finish order the
+  final status is saved first and the copy is deleted right after, and a copy with 100,000 files takes a moment to
+  delete. The test now waits for the copy to go (up to 30 s): 3 of 3 runs pass alone, and the full suite passes.
 
 ---
 

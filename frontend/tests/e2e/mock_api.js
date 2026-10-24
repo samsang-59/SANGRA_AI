@@ -2,8 +2,8 @@
 export const API = "http://localhost:8000/api/v1";
 
 export async function mockApi(page, { user, token = "aaa.bbb.ccc", projects = [], activeRun = null, runs = [],
-  runDetails = {} } = {}) {
-  const state = { user, token, calls: [], projects, activeRun, runs, uploads: [], runDetails, posts: [] };
+  runDetails = {}, packageBody = null } = {}) {
+  const state = { user, token, calls: [], projects, activeRun, runs, uploads: [], runDetails, posts: [], packageBody };
   await page.route(`${API}/**`, async (route) => {
     const request = route.request();
     const path = new URL(request.url()).pathname.replace("/api/v1", "");
@@ -60,6 +60,22 @@ export async function mockApi(page, { user, token = "aaa.bbb.ccc", projects = []
     if (run && request.method() === "GET") {
       const detail = state.runDetails[run[1]];
       return detail ? json(200, { data: detail }) : json(404, { error: { code: "NOT_FOUND", message: "Not found." } });
+    }
+    if (run && request.method() === "DELETE") {
+      delete state.runDetails[run[1]];
+      return json(200, { data: { id: Number(run[1]), deleted: true } });
+    }
+    const pack = /^\/runs\/(\d+)\/package$/.exec(path);
+    if (pack) {
+      return route.fulfill({ status: 200, body: state.packageBody ?? Buffer.from([80, 75, 5, 6]), headers: {
+        "Access-Control-Allow-Origin": "*", "Access-Control-Expose-Headers": "Content-Disposition",
+        "Content-Type": "application/zip", "Content-Disposition": `attachment; filename="sangra-run-${pack[1]}.zip"` } });
+    }
+    if (/^\/runs\/(\d+)\/apply-to-source$/.test(path)) {
+      const id = path.split("/")[2];
+      state.posts.push({ action: "apply", body: null });
+      state.runDetails[id] = { ...state.runDetails[id], applied_to_source_at: "2026-10-22T15:00:00Z" };
+      return json(200, { data: state.runDetails[id] });
     }
     const action = /^\/runs\/(\d+)\/(approval|hint|cancel)$/.exec(path);
     if (action && request.method() === "POST") {
