@@ -34,6 +34,9 @@
   text-align: center;
 }
 
+/* A link inside a sentence needs more than its colour (FE7-U01). */
+.auth-footer a { text-decoration: underline; text-underline-offset: 3px; }
+
 .page {
   width: 100%;
   max-width: var(--content-max-width);
@@ -425,6 +428,15 @@ textarea.input {
 
 @media (max-width: 640px) {
   .top-bar { gap: 12px; padding: 0 16px; }
+}
+
+/* A phone: the brand and "account" on the first row, the navigation on a second row (FE7-U02). */
+@media (max-width: 520px) {
+  .top-bar { height: auto; flex-wrap: wrap; justify-content: space-between; row-gap: 6px; padding: 10px 16px; }
+  .top-bar-nav { order: 3; flex-basis: 100%; }
+}
+
+@media (max-width: 640px) {
   .banner { padding: 10px 16px; flex-wrap: wrap; }
   .page { padding: 20px 16px; }
   .auth-card, .section-card { padding: 20px; }
@@ -533,6 +545,7 @@ textarea.input {
 
 /* --- tables -------------------------------------------------------------------------------------- */
 .table-card {
+  position: relative; /* keeps the visually hidden header text inside the scroll box (FE7-U02) */
   overflow-x: auto;
 }
 
@@ -638,7 +651,7 @@ textarea.input {
 .empty-symbol {
   font-family: var(--font-mono);
   font-size: 44px;
-  color: var(--border-strong);
+  color: var(--faint);
 }
 
 .empty-title {
@@ -923,7 +936,7 @@ textarea.input {
 .diff-body { overflow-x: auto; font-family: var(--font-mono); font-size: 14px; line-height: 1.6; }
 .diff-line { display: grid; grid-template-columns: 5ch 2ch max-content; gap: 8px; padding: 2px 20px 2px 0;
   width: max-content; min-width: 100%; }
-.diff-number { text-align: right; color: var(--faint); }
+.diff-number { text-align: right; color: var(--muted); }
 .diff-code { white-space: pre; }
 .diff-old { background: color-mix(in srgb, var(--danger) 9%, var(--panel)); color: var(--diff-old); }
 .diff-new { background: color-mix(in srgb, var(--success) 9%, var(--panel)); color: var(--success); }
@@ -1001,3 +1014,13 @@ textarea.input {
   font-size: 14px; }
 .attempt-text, .attempt-feedback { margin: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
 .attempt-card .diff { background: var(--panel); }
+
+/* --- run in progress banner, error screen (FE7) ------------------------------------------------- */
+.banner-accent { background: color-mix(in srgb, var(--accent) 7%, var(--panel)); color: var(--text);
+  border-bottom-color: color-mix(in srgb, var(--accent) 25%, var(--border)); }
+.banner-accent .dot { color: var(--accent); width: 9px; height: 9px; }
+.banner-link { color: var(--accent); text-decoration: underline; font-size: 14px; }
+.crash-page { display: flex; justify-content: center; padding: 96px 16px; }
+.crash { text-align: center; align-items: center; gap: 16px; }
+.crash-shell { margin: 0; color: var(--muted); }
+.crash h1 { margin: 0; }

@@ -1,6 +1,6 @@
 // The Run page (05_frontend_design.md F6), /runs/:runId. It works from two sources: the run record (useRun) and the
 // live events (useRunStream). Active runs show the live view; ended runs show the result view.
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { cancelRun } from "../api/runs.js";
@@ -47,7 +47,15 @@ function waitingAttempt(run) {
 }
 
 function LiveView({ run, onStale }) {
+  const queryClient = useQueryClient();
   const { events, connection, retry } = useRunStream(run.id);
+  // The live view closes when the run record shows a final status, which can come before the final event (a refresh
+  // on an earlier event). Then the stream's own "ended" refresh never runs, so the banner and the history are
+  // refreshed here as well (the "run in progress" banner would otherwise stay for up to 30 seconds).
+  useEffect(() => () => {
+    queryClient.invalidateQueries({ queryKey: keys.activeRun });
+    queryClient.invalidateQueries({ queryKey: ["runs"] });
+  }, [queryClient]);
   const waiting = WAITING.includes(run.status);
   const attempt = run.status === "waiting_for_approval" ? waitingAttempt(run) : null;
   const log = (

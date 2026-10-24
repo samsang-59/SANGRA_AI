@@ -292,10 +292,12 @@ async def test_B11_E06_cancel_during_each_phase(app, journey, db, tmp_path, sett
     project_id = await journey.project(name="Shop", language="java", source_type="local_path",
                                        source_reference=str(folder), test_command=JAVA_COMMAND)
     run_id = await journey.start(project_id)
-    target = {"searching": "searching", "waiting_for_hint": "waiting_for_hint", "baseline_testing": "searching",
+    # The baseline runs while the run is still "started" (it moves to "searching" after the baseline), so the
+    # cancel happens once the baseline has begun.
+    target = {"searching": "searching", "waiting_for_hint": "waiting_for_hint", "baseline_testing": "started",
               "waiting_for_approval": "waiting_for_approval", "testing_after_fix": "waiting_for_approval"}[phase]
     await journey.wait(run_id, target)
-    if phase == "baseline_testing":  # the baseline runs while the run is "searching", before the model is asked
+    if phase == "baseline_testing":
         while not runner.calls:
             await asyncio.sleep(0.02)
     if phase == "testing_after_fix":

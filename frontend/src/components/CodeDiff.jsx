@@ -15,7 +15,7 @@ export default function CodeDiff({ edit, showReason = true }) {
         <span className="diff-file">{edit.file_path}</span>
         <span className="diff-meta">lines {edit.start_line}{"–"}{edit.end_line} {"·"} edit {edit.edit_order}</span>
       </figcaption>
-      <div className="diff-body" role="table" aria-label={`changes in ${edit.file_path}`}>
+      <div className="diff-body" role="table" aria-label={`changes in ${edit.file_path}`} tabIndex={0}>
         {oldLines.map((line, i) => (
           <div className="diff-line diff-old" role="row" key={`o${i}`}>
             <span className="diff-number" role="cell">{edit.start_line + i}</span>

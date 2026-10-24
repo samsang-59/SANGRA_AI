@@ -7,7 +7,8 @@ You describe a bug in plain English. SANGRA_AI searches your code, finds the wro
 it undoes the change and tries again (up to 3 times). Your original code is never touched.
 
 > **Status:** implementation in progress, phase by phase (see [the plan](06_implementation_plan.md) and
-> [Implementation progress](#implementation-progress) below). Current phase: **FE6 Run page, result view** (awaiting review). The backend (B0 to B11) is complete.
+> [Implementation progress](#implementation-progress) below). Current phase: **FE7 Polish and full browser tests** (awaiting review), the last phase of the plan. The backend (B0 to B11)
+> and the frontend phases FE0 to FE6 are complete.
 
 ---
 
@@ -162,8 +163,8 @@ A phase is done only when all of its tests pass **and** all earlier tests still 
 | FE3 Projects pages (list, create, edit, delete) | Done (approved) | 282 unit + 17 browser + 2 contract tests pass (Chromium; Firefox blocked by the network policy); backend 607 of 607 pass |
 | FE4 Start run page and History page | Done (approved) | 317 unit + 23 browser + 2 contract tests pass (Chromium); backend 607 of 607 pass |
 | FE5 Run page, live view (timeline, hint, approval, cancel) | Done (approved) | 350 unit + 33 browser + 2 contract + 1 real-backend browser test pass (Chromium); backend 607 of 607 pass |
-| FE6 Run page, result view (tests, attempts, download, apply, delete) | Built, awaiting review | 400 unit + 39 browser + 2 contract + 1 real-backend browser test pass (Chromium); backend 607 of 607 pass (after the test fix below) |
-| FE7 Polish and full browser tests | Not started | |
+| FE6 Run page, result view (tests, attempts, download, apply, delete) | Done (approved) | 400 unit + 39 browser + 2 contract + 1 real-backend browser test pass (Chromium); backend 607 of 607 pass (after the test fix below) |
+| FE7 Polish and full browser tests (banners, error screen, journeys, accessibility, widths, size, soak) | Built, awaiting review | 409 unit + 184 browser + 2 contract + 16 real-backend browser tests pass (Chromium; Firefox blocked by the network policy); axe and 3 widths on 18 pages clean; 30-minute soak clean; backend 609 of 609 pass (2 new, after the test fix below) |
 
 ### Open items (manual checks still to do)
 
@@ -175,6 +176,7 @@ These checks cannot be run from the cloud container where the backend is built. 
 | B8-M01 | Three real calls to the AI model (Groq) on the discount example (5% instead of 10%): find the bug, propose a fix, read the answer. Record the time and the tokens used. | Every test so far uses a fake AI with scripted answers. The cloud container's network blocks `api.groq.com` and has no Groq key. | Option (a) or (b) below. |
 | B8-Q01 | Quality check of the AI: 10 small projects with one planted bug each (5 Java, 5 Python). Record whether the AI finds the right file and line and gives a valid, correct fix. Not an all-pass test (the AI is not deterministic). Bar: at least 5 of 10 valid fixes, otherwise change the model or the prompts first. | Same as B8-M01. | Option (a) or (b) below. |
 | B9-E01 | One complete run with everything real: real Groq, real Docker, the discount example. You approve the fix, the tests pass, the run succeeds. Time and tokens recorded. | Same as B8-M01. Every other part of this flow is already tested with fakes. | Option (a) or (b) below. |
+| FE7-B01 | The browser tests in Firefox (and once in Edge). | The cloud container's network blocks the Firefox download (`cdn.playwright.dev`); Edge does not exist on Linux. Every browser test passes in Chromium. | Allow `cdn.playwright.dev` in the environment's network settings, then `npx playwright install firefox` and `E2E_FIREFOX=1 npm run test:e2e`; or run the browser tests on your laptop with Firefox and Edge installed. |
 
 Two ways to unblock B8-M01, B8-Q01 and B9-E01:
 - (a) In the cloud: in the claude.ai environment settings, allow `api.groq.com` in the network settings and add the
@@ -234,7 +236,8 @@ build, then a scan of it for secrets), `npm run test:e2e` (browser tests with Pl
 `npm run test:contract` (the API layer against the real backend: it creates a fresh database, starts the backend
 with the scripted agent and the file mailer, runs the tests and drops the database; needs `backend/.venv` and
 PostgreSQL), and `npm run test:real` (browser tests against the real backend the same way: it also builds the app
-pointed at that backend into `dist-real` and serves it on port 4180).
+pointed at that backend into `dist-real` and serves it on port 4180). `SOAK_MINUTES=30 npx playwright test
+tests/e2e/fe7_soak.spec.js` runs the 30-minute soak test (1 minute in the normal run).
 
 ### B0: Foundation (notes)
 
@@ -1294,6 +1297,103 @@ Backend test fixed during this phase:
   its final status, the test found the temporary copy still on disk. The app was right: by the B10 finish order the
   final status is saved first and the copy is deleted right after, and a copy with 100,000 files takes a moment to
   delete. The test now waits for the copy to go (up to 30 s): 3 of 3 runs pass alone, and the full suite passes.
+
+### FE7: Polish and full browser tests (notes)
+
+Built (05_frontend_design.md F5 "Layout", F6 "Active-run banner"; the screen "Layout · top bar + banners"):
+- **"A run is in progress — open it →"** banner on every logged-in page, from the `["activeRun"]` data (refreshed
+  every 30 seconds and whenever a run starts or ends), under the verify banner when both apply.
+- **Error screen** (`src/components/ErrorBoundary.jsx`): a page that crashes shows "Something went wrong" with
+  "reload" and "go to projects" instead of a white page. Inside the layout the top bar stays, and going to another
+  page clears the error.
+- **Phone width**: under 520 px the top bar puts the navigation on a second row; wide tables, diffs and test logs
+  scroll inside their own boxes, never the page.
+- **Accessibility fixes from the axe scan**: the links inside the auth page footers are underlined (they were told
+  apart by colour only), the empty-state symbol and the diff line numbers got more contrast, and the diff and test
+  log boxes (which scroll sideways) can be reached with Tab.
+- **The build check** (`npm run check:build`) also checks FE7-S02 (the words GROQ and SECRET never appear, "password"
+  only as labels, field names and messages, never with a value) and FE7-L01 (the size budget).
+- **Real-backend browser tests** (`npm run test:real`): the backend runs on a fixed address, and a small control
+  address lets each test restart it with its own scripted agent, or stop and start it. The test project now has a
+  `pom.xml` at the top as well (a zip whose files all sit in one top folder has that folder removed when unpacked,
+  the GitHub "Download ZIP" rule of B6).
+
+Problems found and fixed in this phase:
+1. **The backend did not stop while a Run page was open.** On Ctrl+C or SIGTERM uvicorn waits for open requests,
+   and a live stream never ends on its own, so with a browser tab on a running run the server kept running (still
+   running after 25 s in the test). Fix: `python -m app` now gives uvicorn a shutdown time limit of 10 seconds
+   (`SHUTDOWN_GRACE_SECONDS` in `backend/app/__main__.py`); after it the remaining connections are closed and the page
+   reconnects to the next server by itself. New backend test `tests/test_fe7_shutdown.py` (fails without the fix).
+2. **The "run in progress" banner could stay up to 30 seconds after a run ended.** A refresh of the run record
+   could show the final status before the final event arrived; the page then switched to the result view and closed
+   the stream, so the stream's "the run ended" refresh never ran. Fix: closing the live view always refreshes the
+   active run and the history. New unit test (fails without the fix).
+3. **The pages were 467 px wide on a 360 px phone** (the top bar), and **the history 515 px** (a visually hidden
+   table header escaped its scroll box). Both fixed (see above).
+4. The axe findings above (colour-only links, two contrast problems, two scroll boxes without keyboard access).
+
+Test results:
+- Unit tests: 409 of 409 pass (9 new in `tests/unit/fe7_layout.test.jsx`: the banners, the 30-second refresh, the ended-run
+  race, the error screen inside and outside the layout).
+- Browser tests with the mocked API (Chromium, dev and built app): 184 pass, 2 skipped by design (the soak runs only
+  on the built app; one older test is skipped by design). New:
+  - FE7-U01: an axe scan (WCAG 2.1 A and AA) of 18 pages and states (login, register, forgot, reset, verify, projects
+    with and without data, new and edit project, start run, history, the three live run screens, the succeeded and
+    failed results, account, not found): no serious or critical problem.
+  - FE7-U02: the same 18 pages at 360, 768 and 1280 px: no sideways scrolling of the page.
+  - FE7-L02: clicking around (projects, a new project form, the history with paging and filters, a live run
+    receiving events, the approval box, a result page, the account page) without stopping. The 30-minute run: 1,192 rounds, the
+    JavaScript heap 4.1 MB after the warm-up and 4.2 MB at the end, 0 console errors.
+- Real-backend browser tests (`npm run test:real`, Chromium, built app with the real CORS settings): 16 of 16 pass,
+  3 runs in a row:
+  - FE7-F03: the built app talks to the backend; a foreign origin gets no CORS permission.
+  - FE7-E01: register, verify by the emailed link, create a zip project in the form, upload the zip, approve,
+    success, download (a real zip); the banner shows during the run and goes at the end.
+  - FE7-E02: a hint, a rejected fix, a fix that fails the tests, a second attempt that passes (3 attempts, the
+    failed one reverted).
+  - FE7-E03: cancel while started, searching, waiting for a hint, waiting for approval and testing.
+  - FE7-E04: the password is changed in another browser in the middle of a run; the next action leads to the login
+    page ("Session ended"), and after logging in the user is back on the run and finishes it.
+  - FE7-E05: change password: logged out, and the old token answers 401.
+  - FE7-E06: the backend restarts while the run waits for approval; the page shows "Reconnecting…", then "live", and
+    the run is approved and succeeds.
+  - FE7-E07: two tabs follow the same run; a third tab that missed the updates approves again and gets the backend's
+    message, then shows the real state.
+  - FE7-E08: a second user gets "page not found" for the first user's run and project pages, an empty history and
+    project list, and 404 from the API.
+  - FE7-X01: the backend is stopped: "Cannot reach the server" with retry, and the app works again when it is back;
+    on a live run "Reconnecting…", then "live" again.
+  - FE5-F11 and FE6 (from earlier phases) pass as well.
+- FE7-S01 `npm audit`: 0 vulnerabilities.
+- FE7-S02: GROQ 0 times, SECRET 0 times, "password" 69 times, all labels, field names, routes and messages.
+- FE7-L01: the JavaScript and CSS are 134 KB gzipped (JavaScript 111 KB, CSS 27 KB); budget 300 KB.
+- FE7-B01: Chromium only; Firefox is blocked by the network policy (see Open items).
+- Lint: no problems. Contract tests: 2 of 2 pass. Backend: 609 of 609 pass (2 new tests, after the test fix below).
+
+Decisions made where the design docs were silent (please check):
+1. The "run in progress" banner shows on every logged-in page, the run page included (as in the run screens).
+2. The error screen offers "reload" and "go to projects"; the error itself goes to the browser console only.
+3. The size budget is the plan's suggestion: 300 KB gzipped for the JavaScript and CSS together.
+4. The shutdown time limit of the backend is 10 seconds.
+5. FE7-E03 cancels in every phase that can be held from a browser. "applying" lasts only a moment with the scripted
+   agent, so it is not cancelled from the browser (the backend tests cancel in it). To hold "searching", the
+   scripted agent's steps can now take some seconds (`"seconds"`, as its test steps already could; test mode only),
+   with a backend test (`tests/test_fe7_fake_script.py`).
+6. FE7-E04 ends the session by changing the password in another browser (that makes every older token invalid).
+7. FE7-E05 waits a little over a second before changing the password: the backend compares token times in whole
+   seconds (Gap #1), so a token made in the same second as the change stays valid on purpose.
+8. FE7-L02 runs 1 minute by default; `SOAK_MINUTES=30 npx playwright test tests/e2e/fe7_soak.spec.js` runs the 30
+   minutes of the plan (done for this phase, numbers above). Memory is the JavaScript heap after garbage collection,
+   measured after a warm-up.
+9. The auth pages have no `<h1>` (the brand is the heading of the design); axe rates that as minor, so it stays.
+
+Backend test fixed during this phase:
+- **B11-E06 [baseline_testing]** ("cancel during each phase") failed once in the full run. The test waited for the
+  status "searching" to cancel during the baseline tests, but the baseline runs while the run is still "started"
+  (it moves to "searching" after the baseline). With a scripted model that answers at once, "searching" lasts only a
+  moment, so the test passed only when its polling caught that moment, and it never cancelled during the baseline.
+  The test now waits for "started" and the baseline run, then cancels: 25 of 25 runs of the five phases pass, and
+  the full suite passes.
 
 ---
 

@@ -31,7 +31,7 @@ function Result({ title, result }) {
         </p>
       )}
       {result.log_excerpt
-        ? <pre className="test-log">{result.log_excerpt}</pre>
+        ? <pre className="test-log" tabIndex={0} aria-label={`${title}: test output`}>{result.log_excerpt}</pre>
         : <p className="test-missing">no test output</p>}
     </section>
   );

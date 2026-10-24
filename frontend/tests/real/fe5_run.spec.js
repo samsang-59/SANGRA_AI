@@ -1,41 +1,19 @@
 // FE5-F11 against the real backend (scripted agent, run with `npm run test:real`): a complete run followed on the Run
 // page: events, a hint, a rejected fix, an accepted fix, success. Then FE6 on the real result: tests, attempts,
 // download, apply to my folder, delete.
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { expect, test } from "@playwright/test";
-
-const API = `${process.env.REAL_ORIGIN}/api/v1`;
-
-function verifyLink(email) {
-  const mail = readFileSync(process.env.REAL_MAIL_FILE, "utf8").trim().split("\n").map((line) => JSON.parse(line))
-    .find((m) => m.to === email);
-  return /\/verify-email\?token=[A-Za-z0-9_-]+/.exec(mail.body)[0];
-}
+import { FILE, fix, found, localProject, newVerifiedUser, notFound, restartBackend, search, startRun, tests,
+} from "./helpers.js";
 
 test("FE5-F11: a complete run with the scripted agent: events, hint, reject, accept, success", async ({ page }) => {
   test.skip(!process.env.REAL_ORIGIN, "needs the real backend: npm run test:real");
-  const email = `real-${Date.now()}@example.com`;
-  await page.goto("/register");
-  await page.getByLabel("Name").fill("Real Test");
-  await page.getByLabel("Email").fill(email);
-  await page.getByLabel("Password", { exact: true }).fill("Str0ng-pass-1");
-  await page.getByRole("button", { name: "create account" }).click();
-  await expect(page.getByRole("heading", { name: "Projects" })).toBeVisible();
-  await page.goto(verifyLink(email));
-  await expect(page.getByRole("heading", { name: "Email verified" })).toBeVisible();
-
-  const projectId = await page.evaluate(async ({ api, folder }) => {
-    const response = await fetch(`${api}/projects`, { method: "POST", headers: { "Content-Type": "application/json",
-      Authorization: `Bearer ${localStorage.getItem("sangra_token")}` },
-    body: JSON.stringify({ name: "summer-sale-service", language: "java", source_type: "local_path",
-      source_reference: folder, test_command: "mvn test" }) });
-    return (await response.json()).data.id;
-  }, { api: API, folder: process.env.REAL_PROJECT_DIR });
-
-  await page.goto(`/projects/${projectId}/run`);
-  await page.getByLabel("Describe the bug in plain English").fill("The summer sale shows 5% discount, it should be 10%.");
-  await page.getByRole("button", { name: /start run/ }).click();
-  await expect(page).toHaveURL(/\/runs\/\d+$/);
+  // Nothing found -> a hint -> found -> a fix that is rejected -> a second fix that is accepted -> tests pass.
+  await restartBackend({ llm: [search("rebate"), notFound, search("summerRate"), found,
+    fix("0.15", "The summer rate should be 15%."), fix("0.10")], tests: tests("failed", "passed") });
+  await newVerifiedUser(page);
+  const projectId = await localProject(page);
+  await startRun(page, projectId);
 
   // Nothing found: the hint box.
   await expect(page.getByRole("heading", { name: "The agent needs a hint" })).toBeVisible({ timeout: 30_000 });
@@ -82,11 +60,13 @@ test("FE5-F11: a complete run with the scripted agent: events, hint, reject, acc
     page.getByRole("button", { name: "download package" }).click()]);
   expect(download.suggestedFilename()).toMatch(/^sangra-run-\d+\.zip$/);
   expect(readFileSync(await download.path()).subarray(0, 2).toString()).toBe("PK");
-  const file = `${process.env.REAL_PROJECT_DIR}/src/main/java/shop/Discount.java`;
+  const file = `${process.env.REAL_PROJECT_DIR}/${FILE}`;
+  const original = readFileSync(file, "utf8");
   expect(readFileSync(file, "utf8")).toContain("return 0.05;"); // the folder is untouched until "apply"
   await page.getByRole("button", { name: "apply to my folder" }).click();
   await expect(page.getByRole("button", { name: "applied" })).toBeDisabled();
   expect(readFileSync(file, "utf8")).toContain("return 0.10;");
+  writeFileSync(file, original); // the other tests start from the original folder again
   await page.getByRole("button", { name: "delete run" }).click();
   await page.getByRole("alertdialog").getByRole("button", { name: "delete run" }).click();
   await expect(page).toHaveURL(/\/runs$/);

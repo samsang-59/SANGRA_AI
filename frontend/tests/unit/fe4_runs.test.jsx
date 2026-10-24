@@ -128,7 +128,8 @@ describe("start a run", () => {
     await user.type(box, BUG);
     await user.click(screen.getByRole("button", { name: /start run/ }));
     expect(await screen.findByText("You already have a run in progress")).toBeInTheDocument();
-    await waitFor(() => expect(screen.getByRole("link", { name: /open it/ })).toHaveAttribute("href", "/runs/42"));
+    const notice = screen.getByText("You already have a run in progress").closest(".notice");
+    await waitFor(() => expect(within(notice).getByRole("link", { name: /open it/ })).toHaveAttribute("href", "/runs/42"));
   });
 
   it.each([

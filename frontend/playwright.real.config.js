@@ -5,7 +5,8 @@ import { defineConfig, devices } from "@playwright/test";
 export default defineConfig({
   testDir: "tests/real",
   reporter: "list",
-  timeout: 120_000,
+  timeout: 180_000,
+  workers: 1, // the tests share one backend and restart it with their own agent script
   projects: [{ name: "real-chromium", use: { ...devices["Desktop Chrome"], baseURL: "http://localhost:4180" } }],
   webServer: [{ command: "npx vite preview --outDir dist-real --port 4180 --strictPort", url: "http://localhost:4180",
     reuseExistingServer: false, timeout: 60_000 }],

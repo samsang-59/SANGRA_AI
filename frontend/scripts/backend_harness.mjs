@@ -1,7 +1,8 @@
 // Starts the real backend in its test setup (Gaps #10: scripted agent and fake test runner, emails written to a file)
 // for the contract tests and the real-backend browser tests. Needs the backend's virtual environment and PostgreSQL:
 // a fresh database is created next to TEST_DATABASE_URL (default: the backend tests' one), migrated, and dropped by
-// stop(). The project is the Amazon discount example as a local folder.
+// stop(). The project is the Amazon discount example, as a local folder and as a zip. The process can be stopped,
+// started and restarted with a new agent script on the same address and database (FE7-E06, FE7-X01).
 import { spawn, spawnSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
@@ -12,6 +13,10 @@ import { randomBytes } from "node:crypto";
 const BACKEND = new URL("../../backend/", import.meta.url).pathname;
 const PYTHON = join(BACKEND, ".venv/bin/python");
 const ADMIN = "import os, psycopg\nconn = psycopg.connect(os.environ['BASE_DB'], autocommit=True)\n";
+const ZIP = "import os, sys, zipfile\nroot, target = sys.argv[1], sys.argv[2]\n" +
+  "with zipfile.ZipFile(target, 'w') as z:\n    for folder, _, files in os.walk(root):\n" +
+  "        for name in files:\n            path = os.path.join(folder, name)\n" +
+  "            z.write(path, os.path.relpath(path, root))\n";
 
 export const freePort = () => new Promise((resolve) => {
   const server = createServer().listen(0, "127.0.0.1", () => {
@@ -27,8 +32,8 @@ export async function startTestBackend({ agentScript, corsOrigins = "http://loca
   const work = mkdtempSync(join(tmpdir(), "sangra-backend-"));
   const dbName = `sangra_contract_${randomBytes(5).toString("hex")}`;
   const database = baseDatabase.replace(/\/[^/?]+(\?|$)/, `/${dbName}$1`);
-  const python = (code) => {
-    const result = spawnSync(PYTHON, ["-c", code], { cwd: BACKEND, encoding: "utf8",
+  const python = (code, args = []) => {
+    const result = spawnSync(PYTHON, ["-c", code, ...args], { cwd: BACKEND, encoding: "utf8",
       env: { ...process.env, PYTHONPATH: BACKEND, BASE_DB: baseDatabase, DB_NAME: dbName } });
     if (result.status !== 0) throw new Error(result.stderr);
   };
@@ -46,10 +51,16 @@ export async function startTestBackend({ agentScript, corsOrigins = "http://loca
   mkdirSync(join(project, "src/main/java/shop"), { recursive: true });
   writeFileSync(join(project, "src/main/java/shop/Discount.java"),
     "package shop;\n\npublic class Discount {\n    public static double summerRate() {\n        return 0.05;\n    }\n}\n");
+  // A file at the top too: a zip whose files all sit in one top folder has that folder removed when unpacked.
+  writeFileSync(join(project, "pom.xml"), "<project><modelVersion>4.0.0</modelVersion><groupId>shop</groupId>" +
+    "<artifactId>shop</artifactId><version>1</version></project>\n");
+  const zipFile = join(work, "shop.zip");
+  python(ZIP, [project, zipFile]);
   const script = join(work, "agent.json");
   writeFileSync(script, JSON.stringify(agentScript));
 
   const port = await freePort();
+  const origin = `http://127.0.0.1:${port}`;
   const mailFile = join(work, "mail.jsonl");
   const env = {
     PATH: process.env.PATH, HOME: process.env.HOME, APP_MODE: "local", DATABASE_URL: database,
@@ -58,28 +69,45 @@ export async function startTestBackend({ agentScript, corsOrigins = "http://loca
     WORKSPACES_DIR: join(work, "workspaces"), PACKAGES_DIR: join(work, "packages"), PORT: String(port),
     LOG_LEVEL: "WARNING", BCRYPT_ROUNDS: "4", STREAM_POLL_SECONDS: "0.1", AGENT_TEST_MODE: "fake",
     AGENT_FAKE_SCRIPT: script, MAILER_MODE: "file", MAIL_FILE: mailFile, DOCKER_HOST: "unix:///nonexistent/docker.sock",
+    PYTHONPATH: BACKEND,
   };
-  const backend = spawn(PYTHON, ["-m", "app"], { cwd: work, env: { ...env, PYTHONPATH: BACKEND },
-    stdio: ["ignore", "inherit", "inherit"] });
-  const exited = new Promise((resolve) => backend.once("exit", resolve));
 
-  const origin = `http://127.0.0.1:${port}`;
-  let healthy = false;
-  for (let i = 0; i < 100 && !healthy; i += 1) {
-    try {
-      healthy = (await fetch(`${origin}/api/v1/health`)).ok;
-    } catch {
+  let child = null;
+  let exited = null;
+  async function startProcess() {
+    child = spawn(PYTHON, ["-m", "app"], { cwd: work, env, stdio: ["ignore", "inherit", "inherit"] });
+    exited = new Promise((resolve) => child.once("exit", resolve));
+    for (let i = 0; i < 150; i += 1) {
+      try {
+        if ((await fetch(`${origin}/api/v1/health`)).ok) return;
+      } catch {
+        // not up yet
+      }
       await new Promise((resolve) => setTimeout(resolve, 200));
     }
-  }
-  const stop = async () => {
-    backend.kill("SIGTERM");
-    await exited;
-    dropDatabase();
-  };
-  if (!healthy) {
-    await stop();
     throw new Error("The backend did not start (is PostgreSQL up and migrated?)");
   }
-  return { origin, mailFile, project, work, stop };
+  async function stopProcess() {
+    if (!child) return;
+    child.kill("SIGTERM");
+    await exited;
+    child = null;
+  }
+  async function restart(newScript) {
+    await stopProcess();
+    if (newScript) writeFileSync(script, JSON.stringify(newScript));
+    await startProcess(); // a new process also starts the agent script from its first step
+  }
+  const stop = async () => {
+    await stopProcess();
+    dropDatabase();
+  };
+
+  try {
+    await startProcess();
+  } catch (error) {
+    await stop();
+    throw error;
+  }
+  return { origin, mailFile, project, zipFile, work, stop, stopProcess, startProcess, restart };
 }

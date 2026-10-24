@@ -1,5 +1,6 @@
-import { Navigate, Route, Routes } from "react-router-dom";
+import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { AnyAuthRoute, ProtectedRoute, PublicOnlyRoute } from "./auth/guards.jsx";
+import ErrorBoundary from "./components/ErrorBoundary.jsx";
 import Layout from "./components/Layout.jsx";
 import AccountPage from "./pages/AccountPage.jsx";
 import ForgotPasswordPage from "./pages/ForgotPasswordPage.jsx";
@@ -16,30 +17,33 @@ import VerifyEmailPage from "./pages/VerifyEmailPage.jsx";
 
 // The route table of 05_frontend_design.md F1, with the guards of F3.
 export default function App() {
+  const location = useLocation();
   return (
-    <Routes>
-      <Route path="/" element={<Navigate to="/projects" replace />} />
-      <Route element={<PublicOnlyRoute />}>
-        <Route path="/login" element={<LoginPage />} />
-        <Route path="/register" element={<RegisterPage />} />
-        <Route path="/forgot-password" element={<ForgotPasswordPage />} />
-        <Route path="/reset-password" element={<ResetPasswordPage />} />
-      </Route>
-      <Route element={<AnyAuthRoute />}>
-        <Route path="/verify-email" element={<VerifyEmailPage />} />
-      </Route>
-      <Route element={<ProtectedRoute />}>
-        <Route element={<Layout />}>
-          <Route path="/account" element={<AccountPage />} />
-          <Route path="/projects" element={<ProjectsPage />} />
-          <Route path="/projects/new" element={<ProjectFormPage />} />
-          <Route path="/projects/:projectId/edit" element={<ProjectFormPage />} />
-          <Route path="/projects/:projectId/run" element={<StartRunPage />} />
-          <Route path="/runs" element={<HistoryPage />} />
-          <Route path="/runs/:runId" element={<RunPage />} />
+    <ErrorBoundary resetKey={location.pathname}>
+      <Routes>
+        <Route path="/" element={<Navigate to="/projects" replace />} />
+        <Route element={<PublicOnlyRoute />}>
+          <Route path="/login" element={<LoginPage />} />
+          <Route path="/register" element={<RegisterPage />} />
+          <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+          <Route path="/reset-password" element={<ResetPasswordPage />} />
         </Route>
-      </Route>
-      <Route path="*" element={<NotFoundPage />} />
-    </Routes>
+        <Route element={<AnyAuthRoute />}>
+          <Route path="/verify-email" element={<VerifyEmailPage />} />
+        </Route>
+        <Route element={<ProtectedRoute />}>
+          <Route element={<Layout />}>
+            <Route path="/account" element={<AccountPage />} />
+            <Route path="/projects" element={<ProjectsPage />} />
+            <Route path="/projects/new" element={<ProjectFormPage />} />
+            <Route path="/projects/:projectId/edit" element={<ProjectFormPage />} />
+            <Route path="/projects/:projectId/run" element={<StartRunPage />} />
+            <Route path="/runs" element={<HistoryPage />} />
+            <Route path="/runs/:runId" element={<RunPage />} />
+          </Route>
+        </Route>
+        <Route path="*" element={<NotFoundPage />} />
+      </Routes>
+    </ErrorBoundary>
   );
 }

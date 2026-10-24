@@ -5,7 +5,7 @@ The script is a JSON file (AGENT_FAKE_SCRIPT):
 {
   "llm":   [ {"tool": "search_files", "args": {"query": "discount"}},
              {"answer": {"outcome": "found", "findings": [...]}},          (any JSON answer)
-             {"answer_text": "free text"} ],
+             {"answer_text": "free text"} ],          (any step may add "seconds": 2 to take that long)
   "tests": [ {"status": "failed", "exit_code": 1, "log": "1 test failed"},
              {"status": "passed", "exit_code": 0, "log": "all tests passed"} ]
 }
@@ -42,6 +42,7 @@ class ScriptedLLM:
 
     async def complete(self, messages, tools) -> ChatReply:
         step = self.script.next("llm")
+        await asyncio.sleep(float(step.get("seconds", 0)))
         if "tool" in step:
             return ChatReply(None, [ToolCall(f"call_{uuid.uuid4().hex[:8]}", step["tool"],
                                              json.dumps(step.get("args", {})))], 50)
