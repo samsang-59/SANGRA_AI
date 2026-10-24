@@ -1,0 +1,35 @@
+/* Design tokens from the screen designs: "00 · Foundations & components", Theme A "Phosphor Amber", dark only. */
+:root {
+  --bg: #0a0c10;            /* page background, inputs */
+  --panel: #0d1015;         /* top bar, code blocks, log */
+  --surface: #11141a;       /* cards, boxes */
+  --raised: #161a22;        /* file headers, active nav */
+  --border: #232836;        /* card borders, dividers */
+  --border-strong: #2c3242; /* inputs, secondary buttons */
+  --text: #e7eaf0;          /* main text */
+  --text-2: #c9ced8;        /* labels, secondary text */
+  --muted: #9097a6;         /* help text, meta */
+  --faint: #7d8494;         /* line numbers, placeholders */
+  --accent: #ffb547;        /* brand, primary, waiting for you */
+  --on-accent: #140d02;     /* text on accent buttons */
+  --info: #7dd3fc;          /* agent working, tool calls, verify */
+  --success: #6ee7b7;       /* succeeded, passed, new code */
+  --danger: #f87171;        /* failed, errors, delete */
+  --diff-old: #fca5a5;      /* old code text */
+
+  --font-sans: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+
+  --radius-small: 6px;      /* nav, chips */
+  --radius-control: 8px;    /* buttons, inputs */
+  --radius-card: 10px;
+  --radius-badge: 999px;
+  --control-height: 44px;   /* button / input */
+  --header-button-height: 40px;
+  --page-padding: 32px;
+  --section-gap: 24px;
+  --card-gap: 16px;
+  --top-bar-height: 60px;
+  --auth-card-width: 420px;
+  --content-max-width: 1360px;
+}

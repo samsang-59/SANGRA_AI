@@ -7,7 +7,8 @@ You describe a bug in plain English. SANGRA_AI searches your code, finds the wro
 it undoes the change and tries again (up to 3 times). Your original code is never touched.
 
 > **Status:** implementation in progress, phase by phase (see [the plan](06_implementation_plan.md) and
-> [Implementation progress](#implementation-progress) below). Current phase: **B11 End to end, security sweep, soak and chaos tests** (awaiting review). The backend is complete; the frontend (FE0 to FE7) comes next.
+> [Implementation progress](#implementation-progress) below). Current phase: **FE7 Polish and full browser tests** (awaiting review), the last phase of the plan. The backend (B0 to B11)
+> and the frontend phases FE0 to FE6 are complete.
 
 ---
 
@@ -155,8 +156,15 @@ A phase is done only when all of its tests pass **and** all earlier tests still 
 | B8 LLM client and prompts | Done (approved) | 29 of 29 pass; B8-M01 and B8-Q01 (real Groq) not run yet |
 | B9 The LangGraph agent (11 steps, pause and resume, limits) | Done (approved) | 62 of 62 pass (541 in total with B0 to B8); B9-E01 (real Groq) not run yet |
 | B10 Finish, package, download, apply to my folder, cleanup | Done (approved) | 36 of 36 pass (577 in total with B0 to B9) |
-| B11 End to end, security sweep, soak and chaos tests | Built, awaiting review | 30 of 30 pass (607 in total with B0 to B10); B11-E01 to E07 with the real Groq not run yet |
-| FE0 to FE7 | Not started | |
+| B11 End to end, security sweep, soak and chaos tests | Done (approved) | 30 of 30 pass (607 in total with B0 to B10); B11-E01 to E07 with the real Groq not run yet |
+| FE0 Frontend project setup (Vite, React, router, QueryClient, env, design tokens) | Done (approved) | 22 unit + 6 browser tests pass (Chromium); lint and build scan clean; backend 607 of 607 still pass. FE0-B01 in Firefox not run yet |
+| FE1 API layer (client, 22 route functions, live stream helper) | Done (approved) | 161 unit + 2 real-backend contract tests pass; FE0 tests still pass; backend 607 of 607 pass |
+| FE2 Auth state, guards and auth pages (register, login, verify, forgot, reset, account) | Done (approved) | 234 unit + 11 browser + 2 contract tests pass; backend 607 of 607 pass |
+| FE3 Projects pages (list, create, edit, delete) | Done (approved) | 282 unit + 17 browser + 2 contract tests pass (Chromium; Firefox blocked by the network policy); backend 607 of 607 pass |
+| FE4 Start run page and History page | Done (approved) | 317 unit + 23 browser + 2 contract tests pass (Chromium); backend 607 of 607 pass |
+| FE5 Run page, live view (timeline, hint, approval, cancel) | Done (approved) | 350 unit + 33 browser + 2 contract + 1 real-backend browser test pass (Chromium); backend 607 of 607 pass |
+| FE6 Run page, result view (tests, attempts, download, apply, delete) | Done (approved) | 400 unit + 39 browser + 2 contract + 1 real-backend browser test pass (Chromium); backend 607 of 607 pass (after the test fix below) |
+| FE7 Polish and full browser tests (banners, error screen, journeys, accessibility, widths, size, soak) | Built, awaiting review | 409 unit + 184 browser + 2 contract + 16 real-backend browser tests pass (Chromium; Firefox blocked by the network policy); axe and 3 widths on 18 pages clean; 30-minute soak clean; backend 609 of 609 pass (2 new, after the test fix below) |
 
 ### Open items (manual checks still to do)
 
@@ -168,6 +176,7 @@ These checks cannot be run from the cloud container where the backend is built. 
 | B8-M01 | Three real calls to the AI model (Groq) on the discount example (5% instead of 10%): find the bug, propose a fix, read the answer. Record the time and the tokens used. | Every test so far uses a fake AI with scripted answers. The cloud container's network blocks `api.groq.com` and has no Groq key. | Option (a) or (b) below. |
 | B8-Q01 | Quality check of the AI: 10 small projects with one planted bug each (5 Java, 5 Python). Record whether the AI finds the right file and line and gives a valid, correct fix. Not an all-pass test (the AI is not deterministic). Bar: at least 5 of 10 valid fixes, otherwise change the model or the prompts first. | Same as B8-M01. | Option (a) or (b) below. |
 | B9-E01 | One complete run with everything real: real Groq, real Docker, the discount example. You approve the fix, the tests pass, the run succeeds. Time and tokens recorded. | Same as B8-M01. Every other part of this flow is already tested with fakes. | Option (a) or (b) below. |
+| FE7-B01 | The browser tests in Firefox (and once in Edge). | The cloud container's network blocks the Firefox download (`cdn.playwright.dev`); Edge does not exist on Linux. Every browser test passes in Chromium. | Allow `cdn.playwright.dev` in the environment's network settings, then `npx playwright install firefox` and `E2E_FIREFOX=1 npm run test:e2e`; or run the browser tests on your laptop with Firefox and Edge installed. |
 
 Two ways to unblock B8-M01, B8-Q01 and B9-E01:
 - (a) In the cloud: in the claude.ai environment settings, allow `api.groq.com` in the network settings and add the
@@ -209,6 +218,26 @@ Some tests need Docker running (the real test runner, B7 and B11) and use the `m
 short version by default; `SANGRA_LONG_TESTS=1 .venv/bin/pytest -q tests/test_b11_load.py tests/test_b11_deploy.py`
 runs the full lengths of the plan (10 minutes of load, 30 minutes of soak, a fresh virtual environment for D01).
 The dependency audit (B11-S05) needs `pip install pip-audit`.
+
+### Running the frontend
+
+Needs Node.js 22 or newer. The backend must run as well (it answers on `http://localhost:8000/api/v1`).
+
+```bash
+cd frontend
+npm install
+cp .env.example .env              # VITE_API_URL = the backend address (default http://localhost:8000/api/v1)
+npm run dev                       # serves http://localhost:5173
+```
+
+Frontend checks: `npm run lint`, `npm test` (unit tests, Vitest), `npm run build && npm run check:build` (the production
+build, then a scan of it for secrets), `npm run test:e2e` (browser tests with Playwright; it starts `npm run dev` and
+`npm run preview` itself, so run `npm run build` first; `E2E_FIREFOX=1` adds Firefox where it is installed), and
+`npm run test:contract` (the API layer against the real backend: it creates a fresh database, starts the backend
+with the scripted agent and the file mailer, runs the tests and drops the database; needs `backend/.venv` and
+PostgreSQL), and `npm run test:real` (browser tests against the real backend the same way: it also builds the app
+pointed at that backend into `dist-real` and serves it on port 4180). `SOAK_MINUTES=30 npx playwright test
+tests/e2e/fe7_soak.spec.js` runs the 30-minute soak test (1 minute in the normal run).
 
 ### B0: Foundation (notes)
 
@@ -810,6 +839,561 @@ Decisions made where the design docs were silent (please check):
 3. L01 "p95 under 500 ms for normal routes": the live stream is not counted, since it stays open by design; login
    is counted (323 ms).
 4. A null character is refused in every text field (422), as no field needs one.
+
+### FE0: Frontend project setup (notes)
+
+The screen designs (19 screens, given before the frontend started) are kept in `design/screens/`. They follow the design
+documents (the same pages, routes, components, stop-reason texts and error codes) and add the look that
+05_frontend_design.md left open.
+
+Built (in `frontend/`):
+- Vite + React 19, React Router (the route table of F1, `src/App.jsx`), TanStack Query (`src/queryClient.js`), started
+  in `src/main.jsx`.
+- `src/config.js`: the API address from `VITE_API_URL`; missing or empty means the documented default
+  `http://localhost:8000/api/v1`; a trailing slash is dropped.
+- The folder layout of F5: `src/api`, `src/auth`, `src/hooks`, `src/pages`, `src/components`, `src/styles`.
+- `src/styles/tokens.css`: every colour, radius and size from the foundations sheet ("Phosphor Amber", dark only).
+  `base.css` holds the fonts (Inter and JetBrains Mono, served with the app), base text and the button styles.
+- The "page not found" page as in its screen. The pages of later phases are stand-ins that name their phase; each is
+  replaced in that phase.
+- Lint (ESLint), unit tests (Vitest with jsdom and Testing Library), browser tests (Playwright, against both
+  `npm run dev` and the built app), and `scripts/check-build.mjs` (scans the built files for secrets).
+
+Test results:
+- Unit (`tests/unit/fe0_setup.test.jsx`): 22 of 22 pass. They cover F01 (every F1 route has its page; `/` goes to
+  /projects), F03 and X01 (the address from the env file, and the default when it is missing or blank), and X02
+  (three unknown URLs show the 404 page).
+- Browser (`tests/e2e/fe0_setup.spec.js`): 6 of 6 pass in Chromium against `npm run dev` (F01) and against the
+  production build through `npm run preview` (F02). They check the first page, the 404 page and its link, that the
+  design colours and both fonts load, and that the console has no errors.
+- Lint passes with no problems (F04).
+- Build: it builds in under 1 s; the main script is 285 KB (89 KB zipped). The secret scan of the built files finds
+  nothing (S01).
+- Backend suite: 607 of 607 still pass. The first run had 2 failures because the container had restarted and Docker was down; after Docker was started, the whole suite was run again and passed.
+
+Not done here:
+- **FE0-B01 in Firefox.** Only Chromium is installed on the build machine, and downloading browsers is not allowed
+  there. The same tests run in Firefox with `E2E_FIREFOX=1 npm run test:e2e` on a machine that has it
+  (`npx playwright install firefox`).
+- **FE0-F03 on the built files.** The address could not be checked in the bundle yet: nothing sends requests in FE0,
+  so the bundler leaves the unused setting out. `check-build.mjs` takes the expected address and checks the bundle once
+  the API client exists (FE1).
+
+Decisions made where the design docs were silent (please check):
+1. Styling: plain CSS with the design tokens as CSS variables, with no component or CSS library. The screens
+   define every colour and size, so a library would add weight without helping.
+2. Fonts: Inter and JetBrains Mono are packaged with the app (`@fontsource`), not loaded from Google: no request to
+   another site, and they also work offline.
+3. JavaScript (`.js`/`.jsx`), not TypeScript, as the file names in 05 (client.js, App.jsx) show.
+4. Exact versions are pinned: React 19.3.1, React Router 7.18.4, TanStack Query 5.104.5, Vite 8.3.5, Vitest 5.0.5,
+   MSW 2.15.0 (for FE1), ESLint 10. Playwright is 1.56.1, the version of the Chromium installed here. jsdom is
+   29.1.1, because jsdom 30 needs Node 22.22.2 or newer.
+5. Ports: dev server 5173 (the FRONTEND_URL and CORS default of the backend), preview 4173.
+6. The screen designs are kept in the repository (`design/screens/`), so every later phase can be checked against them.
+
+### FE1: Frontend API layer (notes)
+
+Built (in `frontend/src/api/`, as F2 describes):
+- `token.js`: the JWT in localStorage (`sangra_token`), with every access in try/catch. When storage is blocked, the
+  token lives in memory for the session.
+- `client.js`: the only place that calls `fetch`. It adds the base URL and the JWT header; sends objects as JSON and
+  FormData as it is; returns what is inside `{ data }`; and throws one `ApiError { status, code, message }`:
+  - `NETWORK_ERROR` when no answer arrives;
+  - `UNKNOWN_ERROR` for a reply that is not our JSON;
+  - `TIMEOUT` after 30 s (10 minutes for uploads).
+
+  The 401 rule: a 401 on a protected route clears the token and calls the auth state's function once, even when
+  several requests fail together; the public auth routes are exempt and never send the token. Only paths inside the
+  API are accepted, so the token cannot be sent anywhere else.
+- `auth.js`, `projects.js`, `runs.js`: the 22 route functions of F2.2. `startRun` sends FormData when there is a zip.
+  `downloadPackage` fetches the file with the JWT and saves it under the server's file name, or
+  `sangra-run-<id>.zip` if that name is missing or odd.
+- `stream.js`: `openRunStream(runId, onEvent, { onEnd, onError, onReconnecting, onBadEvent })` returns `stop()`.
+  - It reads the event stream with `fetch` and joins pieces cut anywhere, even inside a multi-byte character or
+    between `\r` and `\n`.
+  - It skips pings and numbers it has already seen.
+  - It ends with `onEnd` at the final `status_changed` event.
+  - After a drop or a close without the final event, it reconnects after 2, 4, 8, 16 and 32 s with
+    `Last-Event-ID`; after 5 failed tries it calls `onError` once.
+  - A 404 (or another 4xx) stops at once; a 401 follows the 401 rule.
+  - After `stop()`, no callback is called.
+
+Test results:
+- Unit tests: 161 of 161 pass (Vitest; MSW as the fake backend for the client; a scripted stream backend whose chunks,
+  drops and closes the test controls).
+  - `tests/unit/api/fe1_client.test.js` (34): F01-F06, X01-X07, S01, S02, blocked storage, a request stopped by
+    the page (ABORTED).
+  - `tests/unit/api/fe1_routes.test.js` (76): F10 (all 22 functions: method, path, body, auth header), F12, F13,
+    X10, X11 (every function with a 500 and with a network failure).
+  - `tests/unit/api/fe1_stream.test.js` (28): F20-F28, X20-X25, S20, L01-L03.
+  - `tests/unit/api/fe1_stream_react.test.jsx` (1): X26, React's development mode; then switching run 5 to run 6,
+    then closing.
+- Against the real backend (`npm run test:contract`), 2 of 2 pass:
+  - **F11:** the backend's own route list (`/openapi.json`) and our functions plus the stream match exactly
+    (23 routes; `/health` has no function, as in F2.2).
+  - **F30:** register, verify with the link from the mail file, log in, me, create a project, start a run (scripted
+    agent), stream it to the end while approving the fix: 16 events numbered 1..16, ending with `succeeded`. Then the
+    package downloads (`sangra-run-1.zip`, 1,235 bytes).
+- Numbers: 10,000 events in 108 ms (limit 2 s, L01). One 1 MB event in 1-byte chunks: 1.9 s, correct (L02). 100
+  open/close cycles leave no connection, reader or timer (L03).
+- Lint clean; FE0's tests still pass (6 browser tests, 22 unit tests); build scan clean. Backend: 607 of 607 pass (after the pool change below).
+
+Fixed during this phase (found by the tests):
+1. FE1-L02: the first stream parser rebuilt the whole unfinished text for every chunk (quadratic time: a 1 MB event
+   in 1-byte chunks never finished). It now keeps the pieces in a list and joins them once per line: 1 MB takes 91 ms
+   in the parser.
+2. FE1-F30: the project list from the backend is `{ items, total }`, not a plain list. The contract test caught it
+   before any page used it.
+
+Backend change during this phase (B3-L01 started failing; the target was not changed):
+- **What happened:** the backend suite run for FE1 failed B3-L01 ("`/health` under 200 ms while 50 users log in at
+  once"). Run alone it still failed: 179 to 286 ms. It measured 60 ms in B3 and passed in every full run up to
+  B11; the container had restarted since.
+- **Cause:** the `/health` database ping waited for a free pool connection. The pool started with 1 connection
+  (my B1 choice, `DB_POOL_MIN_SIZE=1`). The burst of 50 logins came right after startup, while the pool was still
+  opening the other 9, and that is slow while bcrypt keeps every core busy. The garbage collector and the event loop
+  were checked and ruled out. Neither the bcrypt hash time (291 ms, the same as in B2) nor the health code had
+  changed. A stray test process from my own first FE1 run also used one core for a while; it was stopped, and the
+  test still failed without it.
+- **Fix:** the whole pool is opened at startup (`DB_POOL_MIN_SIZE` defaults to 10, the pool size of the design; a
+  minimum larger than the maximum is capped). B3-L01 now measures 92 to 109 ms (3 runs). **Please check this
+  change.** The other option is to keep 1 and decide the target again.
+
+Not done here:
+- FE0-F03 on the built files: the pages do not use the API layer yet, so the bundler still leaves it out. F30 shows
+  that VITE_API_URL decides where requests go (the tests pointed it at a backend on a random port). The check of the
+  built files follows in FE2, when the first page sends requests.
+
+Decisions made where the design docs were silent (please check):
+1. New client error codes: `TIMEOUT` (no answer within 30 s, or 10 minutes for uploads and downloads), `ABORTED`
+   (stopped by the page, for example when leaving during an upload) and `BAD_PATH` (a path outside the API, never
+   sent).
+2. The public auth routes (register, login, verify, forgot, reset) never send the token, as they do not need it.
+3. Stream: the reconnect count starts again when an event arrives, so a long run with a few short drops does not
+   give up. A 5xx answer is retried like a drop; any other error answer (404, 403 ...) stops at once.
+4. Stream: an event whose data is not JSON is skipped and passed to `onBadEvent` (or written to the console as a
+   warning when the page gives no callback).
+5. Downloads accept only a plain file name from the server (letters, digits, `.`, `_`, `-`), otherwise
+   `sangra-run-<id>.zip`.
+6. The API tests run in Vitest's Node environment, whose `fetch`, `FormData` and streams behave like a browser's
+   (jsdom's FormData does not work with Node's fetch). The React test runs in jsdom.
+
+### FE2: Auth state, route guards and auth pages (notes)
+
+Built (05_frontend_design.md F1, F3, F5; the screens login, register, verify-email (3 states), forgot-password
+(2 states), reset-password, account and the layout):
+- `src/auth/AuthProvider.jsx` and `useAuth.js`: the login state. It holds the token (via `api/token.js`), the user
+  and a status: loading, loggedIn, loggedOut, or unreachable (the backend could not be reached at start). It offers
+  login, register (logged in at once), logout (the backend is not called), refreshUser and retry. It also registers
+  the 401 function, which shows "Session ended, please log in again" on the login page.
+- When the app opens:
+  - no token: logged out, with no request;
+  - a token that is not JWT-shaped: removed;
+  - otherwise a spinner while `getMe` runs (no flash of the login page): a 401 removes the token quietly, and a
+    network error keeps it and shows "Cannot reach the server" with a retry button.
+- `src/auth/guards.jsx`:
+  - `ProtectedRoute`: a logged-out user goes to `/login?returnTo=<page>`, and back there after login; after an
+    explicit logout, plain `/login`.
+  - `PublicOnlyRoute`: a logged-in user goes to the `returnTo` page if it is inside the app, else `/projects`.
+  - `AnyAuthRoute`: used by `/verify-email`.
+- Pages: Login, Register, VerifyEmail, ForgotPassword, ResetPassword, Account. Each form checks the backend's rules
+  before sending (`src/validation.js`: name 1-100, email shape, password 8+ characters with a letter and a digit and
+  at most 72 bytes, confirm field). It focuses the first wrong field, links each error to its field, and keeps its
+  button disabled while sending (one request). Name and email are trimmed. Backend messages are shown as text
+  (`src/errors.js`).
+  - **Verify:** calls the backend exactly once (also in React's development mode), removes the token from the
+    address bar, then shows success, or "This link is invalid or expired".
+  - **Reset:** has a confirm field; success goes to the login page; a bad or missing link shows the error with a
+    "get a new link" link.
+  - **Account:** shows the email, verified or not, resend (only when not verified), change password (success logs
+    out with "Password changed, please log in again"; a wrong old password stays on the page) and log out.
+- `src/components/Layout.jsx`: the top bar (brand, projects, history, account) and the verify banner with a resend
+  button on every logged-in page. The "run in progress" banner comes in FE7, once runs exist (FE4).
+- Shared pieces: `Form.jsx` (Field, PasswordField with show/hide, SubmitButton), `Status.jsx` (Spinner, Notice,
+  full-page states), `AuthLayout.jsx`, the styles in `src/styles/components.css`. Screenshots were compared with
+  the designs and match.
+
+Test results:
+- Unit tests: 234 of 234 pass (74 new FE2 tests; the FE0 route tests now go through the guards).
+  - `tests/unit/fe2_auth_state.test.jsx` (27): F01-F07, X01-X07, S01, S02, L01 (50 app openings with a valid
+    token leave no handler behind and the heap does not grow).
+  - `tests/unit/fe2_pages.test.jsx` (47): F10-F17, X10-X17, S10-S12, U02.
+- Browser tests (Playwright, Chromium, dev server and built app): 11 pass (1 is skipped by design: the built-files
+  check does not run on the dev server). New:
+  - FE2-U01: register, log out and log in using only the keyboard; the focus order is name, email, password,
+    show, and on login email, "Forgot password?", password.
+  - Login with a wrong password.
+  - FE0-F03 on the built app: requests go to the address from the env file.
+- FE0-F03 is also checked in the built files: a build with `VITE_API_URL=http://api.example.test:9999/api/v1`
+  contains that address, and `npm run check:build` now always checks the address (from the environment, `.env`,
+  or the default).
+- Contract tests against the real backend: 2 of 2 still pass. Lint: no problems. Backend: 607 of 607 pass.
+
+Fixed during this phase (found by the tests):
+1. FE2-X06: when another tab had logged out, this tab's next request went without a token, and the 401 rule ignored
+   that answer, so the tab stayed "logged in". The rule now also applies to a request sent without a token; the auth
+   state ignores a second call.
+2. FE2-U01: after "log out" on the account page, logging in again went back to the account page instead of
+   /projects. Logout now goes to plain /login, as F3 says; only a session that ended by itself remembers the page.
+3. Looks (compared with the screens): the "log out" card is one row, the banner's resend button is cyan, the
+   account page's password hint is in the mono font.
+
+Decisions made where the design docs were silent (please check):
+1. The reset page has a "Confirm new password" field, as the plan (FE2-F15) asks, although its screen shows one
+   field.
+2. The verify page when logged out and the link is bad: "Log in, then send a new link from your account page." with
+   a "log in" button (the screen shows the logged-in version with "go to account").
+3. After a reset the login page says "Password changed, please log in"; after a change on the account page, "Password
+   changed, please log in again" (F1).
+4. `returnTo` is kept only for a path inside the app (starting with one `/`, no `//`, `://`, backslash or control
+   characters).
+5. A saved token that is not shaped like a JWT (three dot-separated parts) is removed without asking the backend.
+6. Password fields have a "show/hide" text button inside the field (FE2-S12); the screens do not show one.
+
+### FE3: Projects pages (notes)
+
+Built (05_frontend_design.md F4, F5; the screens "projects · ProjectsPage", "projects · empty + unverified user" and
+"projects new · projects id edit · ProjectFormPage"):
+- `src/pages/ProjectsPage.jsx`: the list as a table: name, language, source (type, then the URL or path; zip shows
+  "zip uploaded per run"), branch ("default" when empty), test command, and run / edit / delete. It shows a spinner
+  while loading, an error with a retry button, and the empty state "No projects yet - create one".
+  - **Run** opens `/projects/:id/run`. It is disabled with the reason beside it when the email is not verified
+    ("Verify your email to start runs") or a run is already in progress.
+  - **Delete** opens a confirm box ("Delete project?", "<name> and all its runs will be deleted."). Errors such as
+    PROJECT_HAS_ACTIVE_RUN are shown above the list.
+  - Long names, URLs, paths and commands are cut with "…", and the full text is in a tooltip.
+- `src/pages/ProjectFormPage.jsx`: one form for new and edit.
+  - Fields: name; language and source type as choice chips; the GitHub URL or folder path (hidden for zip); the
+    branch (github only, optional); the test command.
+  - It checks the backend's own rules before sending (`src/validation.js`, the same as `project_rules.py`).
+  - Edit fills the form and sends only the fields that changed: a cleared branch is sent as null, and switching to
+    zip clears the reference.
+  - Opening the edit page of a project that is not yours, or does not exist, shows the "page not found" page.
+    Saving a project deleted meanwhile goes back to the list with a message.
+- `src/hooks/queries.js`: `useProjects`, `useProject`, and `useActiveRun` (GET /runs?status=active, refreshed every 30
+  s; FE7 adds the banner on top of it), with the keys of F4. Lists refresh after create, edit and delete.
+- Shared: `ConfirmDialog` (the focus starts on "cancel", Tab stays inside, Escape closes, the focus returns to the
+  button that opened it) and `EmptyState`.
+
+Test results:
+- Unit tests: 282 of 282 pass (48 new in `tests/unit/fe3_projects.test.jsx`: F01-F05, X01-X07, S01, S02, U01, U02,
+  L01).
+- Browser tests (Chromium, dev and built app): 17 pass, 1 skipped by design. New:
+  - FE3-U01 at 1280 and 768 px: 100-character names, a long GitHub URL, a long Windows path and a 500-character
+    command do not cause sideways scrolling.
+  - FE3-U02: the delete box by keyboard, including deleting with Enter.
+- FE3-L01: 20 projects render in 86 ms (limit 200 ms; measured in the test DOM, which is slower than a browser).
+- Screenshots of the list, the form and the delete box were compared with the designs and match.
+- Lint: no problems. Build scan clean. Contract tests: 2 of 2 pass. Backend: 607 of 607 pass. (The container restarted during the first backend run, which then failed with PostgreSQL and Docker down. After they were started again the whole suite was run again and passed.)
+
+Not done here:
+- **Firefox** (FE0-B01 and the later browser checks): installing it failed because this environment's network policy
+  blocks `cdn.playwright.dev` and `playwright.download.prss.microsoft.com` (403). After that host is allowed in the
+  environment's network settings, `npx playwright install firefox` and `E2E_FIREFOX=1 npm run test:e2e` run every
+  browser test in Firefox.
+
+Decisions made where the design docs were silent (please check):
+1. The branch field shows only for GitHub projects: a local folder or a zip has no branch to choose.
+2. When Run is blocked by a run in progress, the reason reads "A run is already in progress"; the "run in progress,
+   open it" banner with the link comes in FE7.
+3. Help text per source type: github "The agent clones the repo for each run." (from the screen); local_path "The
+   agent copies this folder for each run (only when the backend runs on your own machine)."; zip "You upload a .zip
+   of the code with each run."
+4. Saving an edit with no change sends nothing and goes back to the list.
+5. Below 900 px wide the list hides the branch and test-command columns so the actions stay visible.
+
+### FE4: Start run page and History page (notes)
+
+Built (05_frontend_design.md F1, F4, F5; the screens "projects id run · StartRunPage (zip project)" and
+"runs · HistoryPage"):
+- `src/pages/StartRunPage.jsx`, at `/projects/:id/run`:
+  - The project's name, language, source type and test command as tags, then the bug text with a live counter
+    ("0 / 2000 · min 10").
+  - For zip projects only, the zip picker: drop or browse, then "name · size" with remove. The file is checked
+    before any upload (`.zip`, at most 50 MB, not empty).
+  - Start is disabled while the text is shorter than 10 or longer than 2,000 characters (after trimming), the zip
+    is missing or wrong, or the email is not verified. It sends JSON, or FormData with the zip, and opens
+    `/runs/:id`.
+  - ACTIVE_RUN_EXISTS shows "You already have a run in progress" with "open it" (the link comes from the "active"
+    filter). Other errors (EMAIL_NOT_VERIFIED, ZIP_REQUIRED, NOT_FOUND …) are shown on the page.
+  - Leaving the page during an upload stops it. The page of a project that is not yours shows "page not found".
+- `src/pages/HistoryPage.jsx`, at `/runs`:
+  - The runs as a table (run, project, status badge, date as "22 Oct 2026, 14:05" in the browser's time zone,
+    "open →"), 20 per page with prev / next and "page X of Y".
+  - Filters for project and status (all, active, or one status). Filters and page are kept in the address
+    (`?project=2&status=failed&page=2`); odd values (page=abc, -1, 0, 1.5, status=foo) fall back to the defaults.
+  - A click on a row opens the run.
+  - Empty states: "No runs yet - start one from a project" (with "start a run" → projects), "No runs match these
+    filters", and a page past the end ("There are no runs on this page" with "show all runs").
+- `src/components/StatusBadge.jsx` and `src/runStatus.js`: the badge colours of the foundations sheet (cyan = agent
+  working, amber = waiting for you, green = succeeded, red = failed, grey = stopped) and the date format.
+  `src/runRules.js`: the shared rules and texts.
+- After a start, the history and the active run are refreshed (F4 keys).
+
+Test results:
+- Unit tests: 317 of 317 pass (35 new in `tests/unit/fe4_runs.test.jsx`: F01-F04, X01-X08, S01, L02).
+- Browser tests (Chromium, dev and built app): 23 pass, 1 skipped by design. New:
+  - The zip upload in a real browser sends `zip_file` with the file name, then opens the run page.
+  - FE4-L01: 500 runs. On the built app the first page shows in 295 ms (limit 1 s, including the start of the
+    app) and a filter change takes 146 ms (limit 500 ms). On the dev server: 639 ms and 164 ms.
+  - FE4-L02: a 2,000-character bug text is sent whole and causes no sideways scrolling.
+- Screenshots of both pages were compared with the designs and match.
+- Lint: no problems. Build scan clean. Contract tests: 2 of 2 pass. Backend: 607 of 607 pass (after the test fix below).
+
+Decisions made where the design docs were silent (please check):
+1. The bug text limits (10 to 2,000) are counted after trimming spaces, as the backend does; the counter shows that
+   count.
+2. The history keeps the filters in the address as `project`, `status` and `page` (page 1 and empty filters are
+   left out). The status filter offers "active" too (the backend's special value).
+3. Dates are shown in the browser's time zone.
+4. A page past the end shows an empty state with "show all runs"; a page number is never corrected silently.
+5. The start button reads "uploading…" while a zip is sent and "starting…" otherwise.
+
+Backend test fixed during this phase:
+- **B10-F06** ("the cleanup jobs are scheduled") failed once in the full run, and 1 time in 5 when run alone. The
+  test waited only until the file was deleted, then stopped the app. The job deletes the file first and marks the row
+  (`deleted_at`) right after, so a stop in between left the row unmarked; the next cleanup marks it, since a missing
+  file counts as deleted. The app was right. The test now waits for both steps: 8 of 8 runs pass.
+
+### FE5: Run page, live view (notes)
+
+Built (05_frontend_design.md F2.3, F4, F6; the screens "runs id · live · searching (+ reconnecting)",
+"runs id · live · waiting_for_approval" and "runs id · live · waiting_for_hint"):
+- `src/pages/RunPage.jsx`, at `/runs/:id` (it replaces the stand-in page):
+  - Loads the run (`useRun`, key `["run", id]`). A run that does not exist or is not yours shows "page not found".
+  - The header: "history / run #id | project [language] [source type]", the label of what is happening as the
+    title ("Preparing the workspace", "Searching the code for the bug", "Applying the approved edits", "Running the
+    tests in Docker", "Review the proposed fix", "The agent needs a hint"), the status badge, "bug › text", and
+    "cancel run" (a confirm box "Cancel this run?" with "keep running" / "cancel run").
+  - Active run: the live stream opens once (no Last-Event-ID the first time, so the server replays every event).
+    - started, searching, applying, testing: the agent log on the full width, "agent is working █", and "Leaving
+      this page does not stop the run. Only “cancel run” does."
+    - waiting_for_approval and waiting_for_hint: the box on the left, the log on the right with "waiting for you █".
+  - Ended run: a short result card for now (the badge, "Tests passed" or the stop reason in plain words from the
+    F6 table, and the final summary). FE6 builds the full result view (tests, attempts, download, apply, delete).
+  - Status changes are announced to screen readers (a polite live region).
+- `src/hooks/useRunStream.js`: opens the stream (FE1's `openRunStream`), keeps the events in order without
+  duplicates, draws new events in groups (every 100 ms), reloads the run on status_changed, approval_requested,
+  hint_requested and tests_finished, and on the final event also refreshes the active run and the history. The
+  connection state shows in the log header: "● live", "Reconnecting…", or "Lost connection" with "retry". When the
+  tab becomes visible again with a lost connection, it reconnects and catches up by itself. Leaving the page stops
+  the stream (the run keeps going on the server).
+- `src/components/EventTimeline.jsx` (the agent log): numbered lines (001, 002 …) with a sign per event type,
+  "status → searching" for status changes, error events in red, unknown types shown plainly, messages over 400
+  characters cut with "show more". It follows new events while you are at the bottom; scrolled up, it stays put and
+  shows "↓ jump to latest".
+- `src/components/ApprovalBox.jsx`: "attempt #N · reason", "rejected X of 3", "edits N in M files", the 1-hour note,
+  the agent's explanation, every edit as a `CodeDiff`, then "Apply these N edits to the copy and run the tests?",
+  the feedback box and "accept & test" / "reject". Reject needs 3-2,000 characters of feedback. The attempt_id of the
+  shown proposal is sent; after sending, the buttons stay disabled until the next status change replaces the box.
+- `src/components/CodeDiff.jsx`: the file, "lines a–b · edit n", the old lines (red, "-") and the new lines
+  (green, "+") numbered from the start line, and "Reason: …". Code is always plain text.
+- `src/components/HintBox.jsx`: "hint N of 3", the 1-hour note, the agent's request, the hint box with a counter
+  ("0 / 2000 · min 3") and "send hint".
+- STALE_ATTEMPT or RUN_STATE_INVALID on an answer: the message is shown on the page and the run is reloaded, so the
+  page shows the real state. A network error keeps the message in the box and the buttons work again.
+- `src/api/stream.js` got an `onOpen` callback (the "live" state).
+
+Test results:
+- Unit tests: 350 of 350 pass (33 new in `tests/unit/fe5_live.test.jsx`: F01-F10, X01-X12, S01-S02, U01-U02,
+  L01-L04). The tests that opened the old stand-in page now open a real (ended) run.
+- Browser tests (Chromium, dev and built app): 33 pass, 1 skipped by design. New (`tests/e2e/fe5_live.spec.js`): the
+  three live screens of the design (with the drop and "Reconnecting…", the approval box used with the keyboard, the
+  hint box), leaving the page, and:
+  - FE5-L01: 2,000 events. On the built app they show in 234 ms (limit 1 s) and scrolling the whole log runs at a
+    median of 16.7 ms per frame (60 frames per second; worst frame 18.4 ms). On the dev server: 693 ms and 16.6 ms.
+    In the unit test (jsdom): 423 ms.
+- FE5-L02: 3,000 events sent one by one, 50 at a time, were drawn in 12 DOM updates (grouped, not one per event).
+  The 60 seconds are compressed to about 2 seconds in the test.
+- FE5-L03: 10 edits with 300 lines render in 38 ms (limit 500 ms).
+- FE5-L04: an hour of pings (360) only: no new timer, no interval, the log does not change, one connection.
+- FE5-F11 against the real backend (`npm run test:real`, new): register, verify by the emailed link, start a run;
+  the scripted agent finds nothing, the page shows the hint box ("hint 1 of 3"), the hint is sent, the first fix is
+  shown and rejected with feedback, the second fix shows "rejected 1 of 3" and "attempt #2 · after_reject", the log
+  has every event once and in order, the fix is accepted and the page switches to the result ("Tests passed",
+  succeeded). Passes.
+- Screenshots of the three live screens were compared with the designs and match.
+- Lint: no problems. Build scan clean. Contract tests: 2 of 2 pass. Backend: 607 of 607 pass.
+
+Decisions made where the design docs were silent (please check):
+1. The page titles of the live statuses are the labels of the design ("Searching the code for the bug" …). The row
+   "label by status: …" on the searching screen is read as a note of the designer listing these labels, not as part
+   of the page, so it is not shown; the same for "(shown only while the stream reconnects)".
+2. For ended runs the page has no title line; the result card carries the badge and "Tests passed" or the stop
+   reason, as in the result screens. Until FE6 this card is all the result view shows.
+3. While the stream connects for the first time the log header shows "Connecting…".
+4. "Lost connection" is shown after the 5 failed reconnects of FE1; "retry" opens a new stream (the server replays
+   everything and the page skips the events it already has).
+5. The approval box answers the attempt whose status is waiting_for_approval (or the newest one if none is).
+6. The cancel confirm box: title "Cancel this run?", text "The agent stops and the copy is cleaned up. Your code is
+   not changed.", buttons "keep running" and "cancel run". A failed cancel shows its message under the button.
+7. The hint box text is the one of the design ("I could not find the code for this bug. Please give a better hint —
+   …"); the backend's own message stays in the log.
+8. In the unit and browser tests the live stream is a scripted fake inside the page's fetch (MSW and Playwright can
+   only answer with a whole body, which would end the stream at once); the real stream over the network is covered by
+   the contract tests and FE5-F11.
+9. Long log lines wrap; code in a diff does not wrap and scrolls sideways inside its box.
+
+### FE6: Run page, result view (notes)
+
+Built (05_frontend_design.md F6 "Result view" and "Stop reason -> plain words"; the screens "runs id · result ·
+succeeded" and "runs id · result · failed"):
+- `src/components/ResultView.jsx`, shown on `/runs/:id` once the run has ended (it replaces FE5's short card):
+  - The result card: the big status badge, "Tests passed" or the stop reason in plain words (every reason of the F6
+    table; any other reason reads "Failed: a technical problem happened (details in the timeline)"), and the final
+    summary. When the run succeeded but the baseline had already passed, the warning "Tests passed, but no test
+    covers this bug, please verify the fix yourself" is shown under the summary.
+  - On the right: "apply to my folder" (only for a succeeded run of a local-path project that was not applied yet),
+    "download package" with "Package is kept for 7 days", and "delete run".
+  - Download: fetches the file with the token and saves it under the server's name (`sangra-run-41.zip`).
+    PACKAGE_EXPIRED shows "The package expired (kept 7 days)" and disables the button; a network failure shows the
+    message with "retry".
+  - Apply: on success the button becomes a disabled "✓ applied". SOURCE_CHANGED, LOCAL_PATH_NOT_ALLOWED,
+    RUN_STATE_INVALID, PACKAGE_EXPIRED and other errors show the backend's message under the card.
+  - Delete: a confirm box "Delete this run?", then the call, then the history.
+  - Each button sends one request at a time, even on a double click.
+- `src/components/TestResultPanel.jsx`: the baseline ("before any change") next to the after-fix result of the last
+  tested attempt ("after fix (attempt #2)"), each with its status, exit code, duration, Docker image and log. A
+  missing result shows "not available".
+- `src/components/AttemptList.jsx`: every attempt, newest first: "attempt #N reason · decision: … · reverted", its
+  status, the explanation, the feedback of a rejected fix, and every edit as old and new code (the same `CodeDiff` as
+  the approval box).
+- `src/runResult.js`: the shared rules (when "apply" is offered, the results to compare, the "no test covers" label).
+- Active runs keep the live view: they have "cancel run" and no "delete run".
+
+Test results:
+- Unit tests: 400 of 400 pass (50 new in `tests/unit/fe6_result.test.jsx`: F01 with a table of every stop reason
+  plus unknown ones, F02-F07, F05 as a table of 3 statuses x 3 source types x applied or not, X01-X06, S01, L01).
+- Browser tests (Chromium, dev and built app): 39 pass, 1 skipped by design. New (`tests/e2e/fe6_result.spec.js`):
+  the succeeded and failed screens (download saved as `sangra-run-41.zip`, apply, delete), and:
+  - FE6-L02: a 50 MB package. On the built app it is saved in about 4 s while the page keeps drawing (237 frames
+    during the download, the longest frame 33 ms).
+- FE6-L01: 3 attempts x 10 edits (900 diff lines) render in 224 ms with the whole app (limit 1 s).
+- Against the real backend (`npm run test:real`): after the FE5-F11 run, the result view shows the real baseline
+  (failed) and after-fix (passed) results, both attempts with the reject feedback; the package downloads as a real
+  zip; "apply to my folder" writes `return 0.10;` into the project folder (it was untouched before); delete goes to
+  an empty history. Passes.
+- Screenshots of both result screens were compared with the designs and match.
+- Lint: no problems. Build scan clean. Contract tests: 2 of 2 pass. Backend: 607 of 607 pass (after the test fix below).
+
+Decisions made where the design docs were silent (please check):
+1. The backend writes the "no test covers this bug" sentence into the final summary; the page takes it out of the
+   summary and shows it as the warning of the design, so it appears once. The warning is also shown if the summary
+   lacks it but the baseline passed.
+2. After a successful apply the button turns into a disabled "✓ applied" (FE6-F06). Opening the page later, an
+   applied run shows no apply button (the design's note "hidden once applied").
+3. The page does not show total_tokens (the screens do not show it).
+4. Missing data texts: "No summary available.", "not available" for a missing test result, "no test output" for an
+   empty log, "No package available", "No fix was proposed in this run." and "no edits".
+5. The attempts list shows the user's feedback of a rejected fix ("your feedback › …"); the edits there have no
+   "Reason:" line, as in the result screens.
+6. FE6-L01 is read as 3 attempts x 10 edits with 300 diff lines per attempt (900 lines in all), the same size as
+   FE5-L03 per attempt.
+7. Error messages of apply, download and delete are shown under the result card (the place of the design's
+   "messages on this page" row); that row and the grey notes on the screens are read as designer notes.
+
+Backend test fixed during this phase:
+- **B11-S07** ("upload limits") failed once in the full run: right after the run of the 100,000-file zip reached
+  its final status, the test found the temporary copy still on disk. The app was right: by the B10 finish order the
+  final status is saved first and the copy is deleted right after, and a copy with 100,000 files takes a moment to
+  delete. The test now waits for the copy to go (up to 30 s): 3 of 3 runs pass alone, and the full suite passes.
+
+### FE7: Polish and full browser tests (notes)
+
+Built (05_frontend_design.md F5 "Layout", F6 "Active-run banner"; the screen "Layout · top bar + banners"):
+- **"A run is in progress — open it →"** banner on every logged-in page, from the `["activeRun"]` data (refreshed
+  every 30 seconds and whenever a run starts or ends), under the verify banner when both apply.
+- **Error screen** (`src/components/ErrorBoundary.jsx`): a page that crashes shows "Something went wrong" with
+  "reload" and "go to projects" instead of a white page. Inside the layout the top bar stays, and going to another
+  page clears the error.
+- **Phone width**: under 520 px the top bar puts the navigation on a second row; wide tables, diffs and test logs
+  scroll inside their own boxes, never the page.
+- **Accessibility fixes from the axe scan**: the links inside the auth page footers are underlined (they were told
+  apart by colour only), the empty-state symbol and the diff line numbers got more contrast, and the diff and test
+  log boxes (which scroll sideways) can be reached with Tab.
+- **The build check** (`npm run check:build`) also checks FE7-S02 (the words GROQ and SECRET never appear, "password"
+  only as labels, field names and messages, never with a value) and FE7-L01 (the size budget).
+- **Real-backend browser tests** (`npm run test:real`): the backend runs on a fixed address, and a small control
+  address lets each test restart it with its own scripted agent, or stop and start it. The test project now has a
+  `pom.xml` at the top as well (a zip whose files all sit in one top folder has that folder removed when unpacked,
+  the GitHub "Download ZIP" rule of B6).
+
+Problems found and fixed in this phase:
+1. **The backend did not stop while a Run page was open.** On Ctrl+C or SIGTERM uvicorn waits for open requests,
+   and a live stream never ends on its own, so with a browser tab on a running run the server kept running (still
+   running after 25 s in the test). Fix: `python -m app` now gives uvicorn a shutdown time limit of 10 seconds
+   (`SHUTDOWN_GRACE_SECONDS` in `backend/app/__main__.py`); after it the remaining connections are closed and the page
+   reconnects to the next server by itself. New backend test `tests/test_fe7_shutdown.py` (fails without the fix).
+2. **The "run in progress" banner could stay up to 30 seconds after a run ended.** A refresh of the run record
+   could show the final status before the final event arrived; the page then switched to the result view and closed
+   the stream, so the stream's "the run ended" refresh never ran. Fix: closing the live view always refreshes the
+   active run and the history. New unit test (fails without the fix).
+3. **The pages were 467 px wide on a 360 px phone** (the top bar), and **the history 515 px** (a visually hidden
+   table header escaped its scroll box). Both fixed (see above).
+4. The axe findings above (colour-only links, two contrast problems, two scroll boxes without keyboard access).
+
+Test results:
+- Unit tests: 409 of 409 pass (9 new in `tests/unit/fe7_layout.test.jsx`: the banners, the 30-second refresh, the ended-run
+  race, the error screen inside and outside the layout).
+- Browser tests with the mocked API (Chromium, dev and built app): 184 pass, 2 skipped by design (the soak runs only
+  on the built app; one older test is skipped by design). New:
+  - FE7-U01: an axe scan (WCAG 2.1 A and AA) of 18 pages and states (login, register, forgot, reset, verify, projects
+    with and without data, new and edit project, start run, history, the three live run screens, the succeeded and
+    failed results, account, not found): no serious or critical problem.
+  - FE7-U02: the same 18 pages at 360, 768 and 1280 px: no sideways scrolling of the page.
+  - FE7-L02: clicking around (projects, a new project form, the history with paging and filters, a live run
+    receiving events, the approval box, a result page, the account page) without stopping. The 30-minute run: 1,192 rounds, the
+    JavaScript heap 4.1 MB after the warm-up and 4.2 MB at the end, 0 console errors.
+- Real-backend browser tests (`npm run test:real`, Chromium, built app with the real CORS settings): 16 of 16 pass,
+  3 runs in a row:
+  - FE7-F03: the built app talks to the backend; a foreign origin gets no CORS permission.
+  - FE7-E01: register, verify by the emailed link, create a zip project in the form, upload the zip, approve,
+    success, download (a real zip); the banner shows during the run and goes at the end.
+  - FE7-E02: a hint, a rejected fix, a fix that fails the tests, a second attempt that passes (3 attempts, the
+    failed one reverted).
+  - FE7-E03: cancel while started, searching, waiting for a hint, waiting for approval and testing.
+  - FE7-E04: the password is changed in another browser in the middle of a run; the next action leads to the login
+    page ("Session ended"), and after logging in the user is back on the run and finishes it.
+  - FE7-E05: change password: logged out, and the old token answers 401.
+  - FE7-E06: the backend restarts while the run waits for approval; the page shows "Reconnecting…", then "live", and
+    the run is approved and succeeds.
+  - FE7-E07: two tabs follow the same run; a third tab that missed the updates approves again and gets the backend's
+    message, then shows the real state.
+  - FE7-E08: a second user gets "page not found" for the first user's run and project pages, an empty history and
+    project list, and 404 from the API.
+  - FE7-X01: the backend is stopped: "Cannot reach the server" with retry, and the app works again when it is back;
+    on a live run "Reconnecting…", then "live" again.
+  - FE5-F11 and FE6 (from earlier phases) pass as well.
+- FE7-S01 `npm audit`: 0 vulnerabilities.
+- FE7-S02: GROQ 0 times, SECRET 0 times, "password" 69 times, all labels, field names, routes and messages.
+- FE7-L01: the JavaScript and CSS are 134 KB gzipped (JavaScript 111 KB, CSS 27 KB); budget 300 KB.
+- FE7-B01: Chromium only; Firefox is blocked by the network policy (see Open items).
+- Lint: no problems. Contract tests: 2 of 2 pass. Backend: 609 of 609 pass (2 new tests, after the test fix below).
+
+Decisions made where the design docs were silent (please check):
+1. The "run in progress" banner shows on every logged-in page, the run page included (as in the run screens).
+2. The error screen offers "reload" and "go to projects"; the error itself goes to the browser console only.
+3. The size budget is the plan's suggestion: 300 KB gzipped for the JavaScript and CSS together.
+4. The shutdown time limit of the backend is 10 seconds.
+5. FE7-E03 cancels in every phase that can be held from a browser. "applying" lasts only a moment with the scripted
+   agent, so it is not cancelled from the browser (the backend tests cancel in it). To hold "searching", the
+   scripted agent's steps can now take some seconds (`"seconds"`, as its test steps already could; test mode only),
+   with a backend test (`tests/test_fe7_fake_script.py`).
+6. FE7-E04 ends the session by changing the password in another browser (that makes every older token invalid).
+7. FE7-E05 waits a little over a second before changing the password: the backend compares token times in whole
+   seconds (Gap #1), so a token made in the same second as the change stays valid on purpose.
+8. FE7-L02 runs 1 minute by default; `SOAK_MINUTES=30 npx playwright test tests/e2e/fe7_soak.spec.js` runs the 30
+   minutes of the plan (done for this phase, numbers above). Memory is the JavaScript heap after garbage collection,
+   measured after a warm-up.
+9. The auth pages have no `<h1>` (the brand is the heading of the design); axe rates that as minor, so it stays.
+
+Backend test fixed during this phase:
+- **B11-E06 [baseline_testing]** ("cancel during each phase") failed once in the full run. The test waited for the
+  status "searching" to cancel during the baseline tests, but the baseline runs while the run is still "started"
+  (it moves to "searching" after the baseline). With a scripted model that answers at once, "searching" lasts only a
+  moment, so the test passed only when its polling caught that moment, and it never cancelled during the baseline.
+  The test now waits for "started" and the baseline run, then cancels: 25 of 25 runs of the five phases pass, and
+  the full suite passes.
 
 ---
 

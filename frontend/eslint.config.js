@@ -1,0 +1,28 @@
+import js from "@eslint/js";
+import globals from "globals";
+import reactHooks from "eslint-plugin-react-hooks";
+import reactRefresh from "eslint-plugin-react-refresh";
+
+export default [
+  { ignores: ["dist", "dist-real", "node_modules", "playwright-report", "test-results"] },
+  {
+    files: ["**/*.{js,jsx}"],
+    languageOptions: {
+      ecmaVersion: "latest",
+      sourceType: "module",
+      globals: { ...globals.browser, ...globals.node },
+      parserOptions: { ecmaFeatures: { jsx: true } },
+    },
+    plugins: { "react-hooks": reactHooks, "react-refresh": reactRefresh },
+    rules: {
+      ...js.configs.recommended.rules,
+      ...reactHooks.configs.recommended.rules,
+      "no-unused-vars": ["error", { varsIgnorePattern: "^[A-Z_]" }],
+      "react-refresh/only-export-components": ["warn", { allowConstantExport: true }],
+    },
+  },
+  // Playwright fixtures need the "({}, testInfo)" form.
+  { files: ["tests/e2e/**/*.js"], rules: { "no-empty-pattern": "off" } },
+  // Test helper modules export components and functions together; fast refresh does not apply to them.
+  { files: ["tests/**/*.{js,jsx}"], rules: { "react-refresh/only-export-components": "off" } },
+];

@@ -1,0 +1,28 @@
+.not-found {
+  min-height: 70vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 20px;
+  padding: var(--page-padding);
+  text-align: center;
+}
+
+.not-found-code {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 96px;
+  line-height: 1;
+  color: var(--accent);
+}
+
+.not-found-cursor {
+  margin-left: 8px;
+}
+
+.not-found-shell {
+  margin: 0;
+  color: var(--muted);
+}

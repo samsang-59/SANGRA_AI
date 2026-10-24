@@ -40,7 +40,9 @@ class Settings(BaseSettings):
     host: str = "127.0.0.1"
     port: int = Field(default=8000, gt=0, lt=65536)
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
-    db_pool_min_size: int = Field(default=1, gt=0)
+    # The whole pool is opened at startup (min = max), so a burst right after a start does not wait while new
+    # connections are made (B3-L01, measured again in FE1). A smaller DB_POOL_MIN_SIZE opens fewer at first.
+    db_pool_min_size: int = Field(default=10, gt=0)
     db_pool_max_size: int = Field(default=10, gt=0)
     db_pool_timeout_seconds: float = Field(default=5.0, gt=0)
     docker_check_timeout_seconds: float = Field(default=2.0, gt=0)

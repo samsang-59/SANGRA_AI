@@ -1,5 +1,6 @@
 """Phase B11 (part 2): the security sweep over the whole API (B11-S01..S07)."""
 
+import asyncio
 import io
 import json
 import re
@@ -296,4 +297,10 @@ async def test_B11_S07_upload_limits(app, client, db):
         assert (row["status"], row["stop_reason"]) == ("failed", "clone_failed")
         cur = await db.execute("SELECT message FROM run_events WHERE run_id = %s AND event_type = 'error'", (run_id,))
         assert any(reason in r["message"] for r in await cur.fetchall())
-        assert not (app.state.settings.workspaces_dir / str(user["id"]) / str(run_id)).exists()
+        # The copy is deleted right AFTER the final status is saved (B10 finish order); a copy with 100,000 files
+        # takes a moment to delete, so wait for it instead of looking at once.
+        copy = app.state.settings.workspaces_dir / str(user["id"]) / str(run_id)
+        deadline = asyncio.get_running_loop().time() + 30
+        while copy.exists() and asyncio.get_running_loop().time() < deadline:
+            await asyncio.sleep(0.1)
+        assert not copy.exists()

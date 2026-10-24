@@ -24,8 +24,8 @@ AttemptWithBackoff.DELAY_BACKOFF = 1.0
 def create_pool(settings: Settings) -> AsyncConnectionPool:
     return AsyncConnectionPool(
         conninfo=settings.database_url.get_secret_value(),
-        min_size=settings.db_pool_min_size,
-        max_size=max(settings.db_pool_max_size, settings.db_pool_min_size),
+        min_size=min(settings.db_pool_min_size, settings.db_pool_max_size),
+        max_size=settings.db_pool_max_size,
         timeout=settings.db_pool_timeout_seconds,
         kwargs={"row_factory": dict_row},
         # A connection is checked before it is handed out, so a connection broken while it sat idle

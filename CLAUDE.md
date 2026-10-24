@@ -9,7 +9,9 @@
 - A failing load (L) target is never silently changed: report the numbers and let the owner decide.
 
 ## After EVERY phase (always, without being asked)
-1. Run the whole test suite (`cd backend && .venv/bin/pytest -q`), not only the new phase.
+1. Run the whole test suite (`cd backend && .venv/bin/pytest -q`), not only the new phase. In the frontend phases
+   also: `cd frontend && npm run lint && npm test && npm run build && npm run check:build && npx playwright test
+   && npm run test:contract` (the last one starts a backend in its test setup).
 2. Update README.md: the progress table, a "Bx: ... (notes)" section with what was built, test results and numbers,
    and the decisions made where the docs were silent.
 3. Commit (message starts with the phase id, e.g. "B6: ...") and push to GitHub right away.
@@ -18,6 +20,7 @@
 5. Report to the owner what was built and which tests passed, then wait for approval before the next phase.
 
 ## Environment notes
+- Frontend screen designs: `design/screens/` (build every page to match them and the design docs).
 - Tests need PostgreSQL: `pg_ctlcluster 16 main start` if it is down (the container may have restarted).
 - Test database: `TEST_DATABASE_URL` (default in `backend/tests/conftest.py`).
 - Docker (from B7): in the cloud container, start the daemon with `dockerd > /tmp/dockerd.log 2>&1 &` if
