@@ -793,3 +793,145 @@ textarea.input {
 .cell-open { text-align: right; font-family: var(--font-mono); font-size: 13px; }
 .table-loading { opacity: 0.6; }
 .pager { margin-top: -8px; }
+
+/* --- run page: header ---------------------------------------------------------------------------- */
+.text-accent { color: var(--accent); }
+.text-info { color: var(--info); }
+.text-muted { color: var(--muted); }
+.text-strong { color: var(--text); }
+.run-heading { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.run-breadcrumb { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin: 0; }
+.breadcrumb-sep { color: var(--border-strong); }
+.run-title { gap: 16px; }
+.run-title h1 { margin: 0; }
+.run-bug { margin: 0; font-size: 17px; overflow-wrap: anywhere; }
+.run-cancel { display: flex; flex-direction: column; align-items: flex-end; gap: 10px; }
+.dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.cursor {
+  display: inline-block;
+  width: 0.55em;
+  height: 1.1em;
+  vertical-align: text-bottom;
+  background: currentColor;
+  animation: blink 1.1s steps(1) infinite;
+}
+
+@keyframes blink { 50% { opacity: 0; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .cursor { animation: none; }
+}
+
+/* --- run page: two columns while waiting for you ------------------------------------------------ */
+.run-columns {
+  display: grid;
+  grid-template-columns: minmax(0, 2.4fr) minmax(300px, 1fr);
+  gap: var(--section-gap);
+  align-items: start;
+}
+
+.run-main { display: flex; flex-direction: column; gap: var(--card-gap); min-width: 0; }
+.run-side { min-width: 0; position: sticky; top: 16px; }
+
+@media (max-width: 960px) {
+  .run-columns { grid-template-columns: minmax(0, 1fr); }
+  .run-side { position: static; }
+}
+
+/* --- agent log (foundations: EventTimeline) ----------------------------------------------------- */
+.log-card { position: relative; background: var(--panel); overflow: hidden; }
+.log-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  font-family: var(--font-mono);
+  font-size: 14px;
+  color: var(--text);
+}
+
+.log-state { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; }
+.log-scroll { max-height: 60vh; overflow-y: auto; padding: 18px 20px; }
+.run-side .log-scroll { max-height: calc(100vh - 220px); }
+.log-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 12px; }
+.log-line {
+  display: grid;
+  grid-template-columns: minmax(3ch, max-content) 1.5ch minmax(0, 1fr);
+  gap: 16px;
+  font-family: var(--font-mono);
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--text-2);
+}
+
+.log-number { color: var(--faint); }
+.log-sign { text-align: center; }
+.log-text { white-space: pre-wrap; overflow-wrap: anywhere; min-width: 0; }
+.log-strong .log-text { color: var(--text); font-weight: 600; }
+.log-error .log-text { color: var(--danger); }
+.log-more { margin-left: 8px; font-size: 13px; }
+.log-empty { margin: 0; color: var(--muted); font-family: var(--font-mono); font-size: 14px; }
+.log-jump { position: absolute; right: 20px; bottom: 64px; }
+.log-footer {
+  padding: 14px 20px;
+  border-top: 1px solid var(--border);
+  font-family: var(--font-mono);
+  font-size: 14px;
+}
+
+/* --- approval and hint boxes ---------------------------------------------------------------------- */
+.approval { display: flex; flex-direction: column; gap: var(--card-gap); }
+.info-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 24px;
+  padding: 14px 20px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.info-bar strong { color: var(--text); }
+.info-bar-note { margin-left: auto; }
+.explain-card { padding: 22px 26px; }
+.explain-label { margin: 0 0 10px; color: var(--accent); font-size: 14px; }
+.explain-text { margin: 0; font-size: 17px; line-height: 1.6; overflow-wrap: anywhere; white-space: pre-wrap; }
+.decide-card { padding: 24px 26px; display: flex; flex-direction: column; gap: 16px;
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--border)); }
+.decide-question { margin: 0; font-size: 15px; }
+.hint-count { text-align: right; }
+
+/* --- code diff (foundations: CodeDiff) ------------------------------------------------------------ */
+.diff { margin: 0; overflow: hidden; }
+.diff-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 12px 20px;
+  background: var(--raised);
+  border-bottom: 1px solid var(--border);
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+
+.diff-file { color: var(--text); overflow-wrap: anywhere; }
+.diff-meta { color: var(--muted); }
+.diff-body { overflow-x: auto; font-family: var(--font-mono); font-size: 14px; line-height: 1.6; }
+.diff-line { display: grid; grid-template-columns: 5ch 2ch max-content; gap: 8px; padding: 2px 20px 2px 0;
+  width: max-content; min-width: 100%; }
+.diff-number { text-align: right; color: var(--faint); }
+.diff-code { white-space: pre; }
+.diff-old { background: color-mix(in srgb, var(--danger) 9%, var(--panel)); color: var(--diff-old); }
+.diff-new { background: color-mix(in srgb, var(--success) 9%, var(--panel)); color: var(--success); }
+.diff-deleted { font-style: italic; color: var(--muted); }
+.diff-reason { margin: 0; padding: 12px 20px; color: var(--muted); font-size: 14px; border-top: 1px solid var(--border); }
+
+/* --- result (FE6 completes it) -------------------------------------------------------------------- */
+.result-card .run-title h1 { font-size: 26px; }
+.result-succeeded { border-color: color-mix(in srgb, var(--success) 35%, var(--border)); }
+.result-failed { border-color: color-mix(in srgb, var(--danger) 35%, var(--border)); }
+.result-summary { margin: 0; color: var(--text-2); white-space: pre-wrap; overflow-wrap: anywhere; }

@@ -71,7 +71,7 @@ describe("FE0-F01: the route table of F1 (with the FE2 guards)", () => {
 
   it.each([
     ["/account", "Account"], ["/projects", "Projects"], ["/projects/new", "New project"],
-    ["/projects/3/edit", "Edit project"], ["/projects/3/run", "Start a run"], ["/runs", "History"], ["/runs/42", "Run"],
+    ["/projects/3/edit", "Edit project"], ["/projects/3/run", "Start a run"], ["/runs", "History"], ["/runs/42", "Tests passed"],
   ])("%s has its page (logged in)", async (path, title) => {
     saveToken(GOOD_TOKEN);
     renderApp(path);

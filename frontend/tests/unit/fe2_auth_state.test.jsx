@@ -64,7 +64,7 @@ describe("when the app opens", () => {
     expect(window.localStorage.getItem(TOKEN_KEY)).toBe(GOOD_TOKEN);
     server.resetHandlers(); // the backend is back
     await userEvent.click(screen.getByRole("button", { name: "retry" }));
-    expect(await screen.findByRole("heading", { name: "Run" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Tests passed" })).toBeInTheDocument();
     expect(currentPath()).toBe("/runs/5");
   });
 
@@ -108,7 +108,7 @@ describe("login, register, logout", () => {
     await screen.findByRole("button", { name: "log in" });
     expect(currentPath()).toBe("/login?returnTo=%2Fruns%2F5%3Ftab%3Dlog");
     await logIn(user);
-    expect(await screen.findByRole("heading", { name: "Run" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Tests passed" })).toBeInTheDocument();
     expect(currentPath()).toBe("/runs/5?tab=log");
   });
 

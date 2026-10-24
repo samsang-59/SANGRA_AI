@@ -48,12 +48,13 @@ export function createSseParser(onMessage) {
 
 /**
  * Opens the live stream of a run. onEvent(event) gets { sequence_number, event_type, message, details, attempt_id,
- * created_at } in order, never twice. Callbacks: onEnd() after the final status_changed event; onReconnecting(try,
- * delayMs); onError(ApiError) when it gives up (5 failed reconnects, or an answer like 404); onBadEvent(text) for an
- * event that is not valid JSON (skipped). Returns stop(); after stop() no callback is called again.
+ * created_at } in order, never twice. Callbacks: onOpen() each time a connection is open (also after a reconnect);
+ * onEnd() after the final status_changed event; onReconnecting(try, delayMs); onError(ApiError) when it gives up
+ * (5 failed reconnects, or an answer like 404); onBadEvent(text) for an event that is not valid JSON (skipped).
+ * Returns stop(); after stop() no callback is called again.
  */
 export function openRunStream(runId, onEvent, callbacks = {}) {
-  const { onEnd, onError, onReconnecting, onBadEvent } = callbacks;
+  const { onOpen, onEnd, onError, onReconnecting, onBadEvent } = callbacks;
   let lastSequence = 0;
   let failedTries = 0;
   let stopped = false;
@@ -133,6 +134,7 @@ export function openRunStream(runId, onEvent, callbacks = {}) {
       giveUp(await errorFromResponse(response));
       return;
     }
+    if (onOpen) onOpen();
     const reader = response.body.getReader();
     const decoder = new TextDecoder("utf-8");
     const feed = createSseParser(handleMessage);

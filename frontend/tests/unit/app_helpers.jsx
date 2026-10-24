@@ -1,7 +1,7 @@
 // Helpers for the page tests (FE2 on): the whole app (router, auth state, query client) with a fake backend (MSW).
-import { StrictMode } from "react";
+import { StrictMode, useEffect } from "react";
 import { render, screen } from "@testing-library/react";
-import { MemoryRouter, useLocation } from "react-router-dom";
+import { MemoryRouter, useLocation, useNavigate } from "react-router-dom";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { setupServer } from "msw/node";
 import { http, HttpResponse } from "msw";
@@ -10,6 +10,7 @@ import { AuthProvider } from "../../src/auth/AuthProvider.jsx";
 import { createQueryClient } from "../../src/queryClient.js";
 import { API_URL } from "../../src/config.js";
 import { TOKEN_KEY } from "../../src/api/token.js";
+import { makeRunDetail } from "./run_helpers.js";
 
 export { http, HttpResponse };
 export const api = (path) => API_URL + path;
@@ -26,7 +27,9 @@ const unauthorized = () => errorReply(401, "UNAUTHORIZED", "Login required, or t
 /** A fake backend that knows one user. Returns { server, seen, state }; state.user can be changed by a test. */
 export function fakeBackend() {
   const seen = [];
-  const state = { user: VERIFIED, tokens: new Set([GOOD_TOKEN]) };
+  // Runs 5 and 42 exist (ended) for the route and deep-link tests; the FE5 tests set their own.
+  const state = { user: VERIFIED, tokens: new Set([GOOD_TOKEN]),
+    runDetails: { 5: makeRunDetail(5, { status: "succeeded" }), 42: makeRunDetail(42, { status: "succeeded" }) } };
   const authed = (request) => state.tokens.has((request.headers.get("authorization") || "").replace("Bearer ", ""));
   const server = setupServer(
     http.get(api("/auth/me"), ({ request }) => (authed(request) ? HttpResponse.json({ data: state.user }) : unauthorized())),
@@ -46,8 +49,16 @@ export function fakeBackend() {
   return { server, seen, state };
 }
 
+const probe = { navigate: null };
+/** Moves the app to another address the way a link would (the page component stays mounted if the route is the same). */
+export const navigateTo = (path) => probe.navigate(path);
+
 export function LocationProbe() {
   const location = useLocation();
+  const navigate = useNavigate();
+  useEffect(() => {
+    probe.navigate = navigate;
+  }, [navigate]);
   return <output data-testid="location">{location.pathname + location.search}</output>;
 }
 
@@ -77,6 +88,8 @@ export function projectRoutes(state) {
   state.projects ??= [];
   state.activeRun ??= null;
   state.nextId ??= 100;
+  state.runDetails ??= {};
+  state.runReplies ??= {};
   const authed = (request) => state.tokens.has((request.headers.get("authorization") || "").replace("Bearer ", ""));
   const notFound = () => errorReply(404, "NOT_FOUND", "Not found.");
   const guard = (handler) => async (info) => (authed(info.request) ? handler(info) : unauthorized());
@@ -123,6 +136,18 @@ export function projectRoutes(state) {
       const items = rows.slice((page - 1) * limit, page * limit);
       return HttpResponse.json({ data: { items, total: rows.length, page, limit } });
     })),
+    // One run (FE5 on): state.runDetails[id] is the record; state.runReplies.{get,approval,hint,cancel} may answer
+    // instead (a function of the request body). The live stream (/runs/:id/events) is faked in run_helpers.js.
+    http.get(api("/runs/:id"), guard(({ params }) => {
+      if (state.runReplies.get) return state.runReplies.get(params.id);
+      const run = state.runDetails[params.id];
+      return run ? HttpResponse.json({ data: run }) : notFound();
+    })),
+    ...["approval", "hint", "cancel"].map((action) => http.post(api(`/runs/:id/${action}`), guard(async ({ params, request }) => {
+      const body = action === "cancel" ? null : await request.json();
+      if (state.runReplies[action]) return state.runReplies[action](body, params.id);
+      return state.runDetails[params.id] ? HttpResponse.json({ data: { message: "OK" } }) : notFound();
+    }))),
     http.post(api("/projects/:id/runs"), guard(async ({ params, request }) => {
       if (state.startReply) return state.startReply(request);
       if (!state.projects.find((p) => String(p.id) === params.id)) return notFound();

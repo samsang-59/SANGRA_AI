@@ -7,7 +7,7 @@ You describe a bug in plain English. SANGRA_AI searches your code, finds the wro
 it undoes the change and tries again (up to 3 times). Your original code is never touched.
 
 > **Status:** implementation in progress, phase by phase (see [the plan](06_implementation_plan.md) and
-> [Implementation progress](#implementation-progress) below). Current phase: **FE4 Start run page and History page** (awaiting review). The backend (B0 to B11) is complete.
+> [Implementation progress](#implementation-progress) below). Current phase: **FE5 Run page, live view** (awaiting review). The backend (B0 to B11) is complete.
 
 ---
 
@@ -160,8 +160,9 @@ A phase is done only when all of its tests pass **and** all earlier tests still 
 | FE1 API layer (client, 22 route functions, live stream helper) | Done (approved) | 161 unit + 2 real-backend contract tests pass; FE0 tests still pass; backend 607 of 607 pass |
 | FE2 Auth state, guards and auth pages (register, login, verify, forgot, reset, account) | Done (approved) | 234 unit + 11 browser + 2 contract tests pass; backend 607 of 607 pass |
 | FE3 Projects pages (list, create, edit, delete) | Done (approved) | 282 unit + 17 browser + 2 contract tests pass (Chromium; Firefox blocked by the network policy); backend 607 of 607 pass |
-| FE4 Start run page and History page | Built, awaiting review | 317 unit + 23 browser + 2 contract tests pass (Chromium); backend 607 of 607 pass |
-| FE5 to FE7 | Not started | |
+| FE4 Start run page and History page | Done (approved) | 317 unit + 23 browser + 2 contract tests pass (Chromium); backend 607 of 607 pass |
+| FE5 Run page, live view (timeline, hint, approval, cancel) | Built, awaiting review | 350 unit + 33 browser + 2 contract + 1 real-backend browser test pass (Chromium); backend 607 of 607 pass |
+| FE6 to FE7 | Not started | |
 
 ### Open items (manual checks still to do)
 
@@ -231,7 +232,8 @@ build, then a scan of it for secrets), `npm run test:e2e` (browser tests with Pl
 `npm run preview` itself, so run `npm run build` first; `E2E_FIREFOX=1` adds Firefox where it is installed), and
 `npm run test:contract` (the API layer against the real backend: it creates a fresh database, starts the backend
 with the scripted agent and the file mailer, runs the tests and drops the database; needs `backend/.venv` and
-PostgreSQL).
+PostgreSQL), and `npm run test:real` (browser tests against the real backend the same way: it also builds the app
+pointed at that backend into `dist-real` and serves it on port 4180).
 
 ### B0: Foundation (notes)
 
@@ -1148,6 +1150,85 @@ Backend test fixed during this phase:
   test waited only until the file was deleted, then stopped the app. The job deletes the file first and marks the row
   (`deleted_at`) right after, so a stop in between left the row unmarked; the next cleanup marks it, since a missing
   file counts as deleted. The app was right. The test now waits for both steps: 8 of 8 runs pass.
+
+### FE5: Run page, live view (notes)
+
+Built (05_frontend_design.md F2.3, F4, F6; the screens "runs id · live · searching (+ reconnecting)",
+"runs id · live · waiting_for_approval" and "runs id · live · waiting_for_hint"):
+- `src/pages/RunPage.jsx`, at `/runs/:id` (it replaces the stand-in page):
+  - Loads the run (`useRun`, key `["run", id]`). A run that does not exist or is not yours shows "page not found".
+  - The header: "history / run #id | project [language] [source type]", the label of what is happening as the
+    title ("Preparing the workspace", "Searching the code for the bug", "Applying the approved edits", "Running the
+    tests in Docker", "Review the proposed fix", "The agent needs a hint"), the status badge, "bug › text", and
+    "cancel run" (a confirm box "Cancel this run?" with "keep running" / "cancel run").
+  - Active run: the live stream opens once (no Last-Event-ID the first time, so the server replays every event).
+    - started, searching, applying, testing: the agent log on the full width, "agent is working █", and "Leaving
+      this page does not stop the run. Only “cancel run” does."
+    - waiting_for_approval and waiting_for_hint: the box on the left, the log on the right with "waiting for you █".
+  - Ended run: a short result card for now (the badge, "Tests passed" or the stop reason in plain words from the
+    F6 table, and the final summary). FE6 builds the full result view (tests, attempts, download, apply, delete).
+  - Status changes are announced to screen readers (a polite live region).
+- `src/hooks/useRunStream.js`: opens the stream (FE1's `openRunStream`), keeps the events in order without
+  duplicates, draws new events in groups (every 100 ms), reloads the run on status_changed, approval_requested,
+  hint_requested and tests_finished, and on the final event also refreshes the active run and the history. The
+  connection state shows in the log header: "● live", "Reconnecting…", or "Lost connection" with "retry". When the
+  tab becomes visible again with a lost connection, it reconnects and catches up by itself. Leaving the page stops
+  the stream (the run keeps going on the server).
+- `src/components/EventTimeline.jsx` (the agent log): numbered lines (001, 002 …) with a sign per event type,
+  "status → searching" for status changes, error events in red, unknown types shown plainly, messages over 400
+  characters cut with "show more". It follows new events while you are at the bottom; scrolled up, it stays put and
+  shows "↓ jump to latest".
+- `src/components/ApprovalBox.jsx`: "attempt #N · reason", "rejected X of 3", "edits N in M files", the 1-hour note,
+  the agent's explanation, every edit as a `CodeDiff`, then "Apply these N edits to the copy and run the tests?",
+  the feedback box and "accept & test" / "reject". Reject needs 3-2,000 characters of feedback. The attempt_id of the
+  shown proposal is sent; after sending, the buttons stay disabled until the next status change replaces the box.
+- `src/components/CodeDiff.jsx`: the file, "lines a–b · edit n", the old lines (red, "-") and the new lines
+  (green, "+") numbered from the start line, and "Reason: …". Code is always plain text.
+- `src/components/HintBox.jsx`: "hint N of 3", the 1-hour note, the agent's request, the hint box with a counter
+  ("0 / 2000 · min 3") and "send hint".
+- STALE_ATTEMPT or RUN_STATE_INVALID on an answer: the message is shown on the page and the run is reloaded, so the
+  page shows the real state. A network error keeps the message in the box and the buttons work again.
+- `src/api/stream.js` got an `onOpen` callback (the "live" state).
+
+Test results:
+- Unit tests: 350 of 350 pass (33 new in `tests/unit/fe5_live.test.jsx`: F01-F10, X01-X12, S01-S02, U01-U02,
+  L01-L04). The tests that opened the old stand-in page now open a real (ended) run.
+- Browser tests (Chromium, dev and built app): 33 pass, 1 skipped by design. New (`tests/e2e/fe5_live.spec.js`): the
+  three live screens of the design (with the drop and "Reconnecting…", the approval box used with the keyboard, the
+  hint box), leaving the page, and:
+  - FE5-L01: 2,000 events. On the built app they show in 234 ms (limit 1 s) and scrolling the whole log runs at a
+    median of 16.7 ms per frame (60 frames per second; worst frame 18.4 ms). On the dev server: 693 ms and 16.6 ms.
+    In the unit test (jsdom): 423 ms.
+- FE5-L02: 3,000 events sent one by one, 50 at a time, were drawn in 12 DOM updates (grouped, not one per event).
+  The 60 seconds are compressed to about 2 seconds in the test.
+- FE5-L03: 10 edits with 300 lines render in 38 ms (limit 500 ms).
+- FE5-L04: an hour of pings (360) only: no new timer, no interval, the log does not change, one connection.
+- FE5-F11 against the real backend (`npm run test:real`, new): register, verify by the emailed link, start a run;
+  the scripted agent finds nothing, the page shows the hint box ("hint 1 of 3"), the hint is sent, the first fix is
+  shown and rejected with feedback, the second fix shows "rejected 1 of 3" and "attempt #2 · after_reject", the log
+  has every event once and in order, the fix is accepted and the page switches to the result ("Tests passed",
+  succeeded). Passes.
+- Screenshots of the three live screens were compared with the designs and match.
+- Lint: no problems. Build scan clean. Contract tests: 2 of 2 pass. Backend: 607 of 607 pass.
+
+Decisions made where the design docs were silent (please check):
+1. The page titles of the live statuses are the labels of the design ("Searching the code for the bug" …). The row
+   "label by status: …" on the searching screen is read as a note of the designer listing these labels, not as part
+   of the page, so it is not shown; the same for "(shown only while the stream reconnects)".
+2. For ended runs the page has no title line; the result card carries the badge and "Tests passed" or the stop
+   reason, as in the result screens. Until FE6 this card is all the result view shows.
+3. While the stream connects for the first time the log header shows "Connecting…".
+4. "Lost connection" is shown after the 5 failed reconnects of FE1; "retry" opens a new stream (the server replays
+   everything and the page skips the events it already has).
+5. The approval box answers the attempt whose status is waiting_for_approval (or the newest one if none is).
+6. The cancel confirm box: title "Cancel this run?", text "The agent stops and the copy is cleaned up. Your code is
+   not changed.", buttons "keep running" and "cancel run". A failed cancel shows its message under the button.
+7. The hint box text is the one of the design ("I could not find the code for this bug. Please give a better hint —
+   …"); the backend's own message stays in the log.
+8. In the unit and browser tests the live stream is a scripted fake inside the page's fetch (MSW and Playwright can
+   only answer with a whole body, which would end the stream at once); the real stream over the network is covered by
+   the contract tests and FE5-F11.
+9. Long log lines wrap; code in a diff does not wrap and scrolls sideways inside its box.
 
 ---
 

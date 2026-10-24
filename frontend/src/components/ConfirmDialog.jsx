@@ -2,8 +2,8 @@
 // Escape cancels, and the focus goes back to the button that opened it (FE3-U02).
 import { useEffect, useId, useRef } from "react";
 
-export default function ConfirmDialog({ title, children, confirmLabel = "delete", busy = false, onConfirm, onCancel,
-  danger = true }) {
+export default function ConfirmDialog({ title, children, confirmLabel = "delete", cancelLabel = "cancel",
+  busyText = "deleting\u2026", busy = false, onConfirm, onCancel, danger = true }) {
   const id = useId();
   const box = useRef(null);
   const cancelRef = useRef(null);
@@ -43,10 +43,10 @@ export default function ConfirmDialog({ title, children, confirmLabel = "delete"
         <h2 id={`${id}-title`}>{title}</h2>
         <p id={`${id}-text`} className="dialog-text">{children}</p>
         <div className="row-end">
-          <button ref={cancelRef} type="button" className="button" onClick={onCancel} disabled={busy}>cancel</button>
+          <button ref={cancelRef} type="button" className="button" onClick={onCancel} disabled={busy}>{cancelLabel}</button>
           <button type="button" className={`button ${danger ? "button-danger-solid" : "button-primary"}`}
             onClick={onConfirm} disabled={busy} aria-busy={busy || undefined}>
-            {busy ? "deleting\u2026" : confirmLabel}
+            {busy ? busyText : confirmLabel}
           </button>
         </div>
       </div>

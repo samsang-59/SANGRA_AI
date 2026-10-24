@@ -2,13 +2,14 @@
 // Keys: ["projects"], ["project", id], ["runs", filters, page], ["run", id], ["activeRun"].
 import { useQuery } from "@tanstack/react-query";
 import { getProject, listProjects } from "../api/projects.js";
-import { listRuns } from "../api/runs.js";
+import { getRun, listRuns } from "../api/runs.js";
 import { useAuth } from "../auth/useAuth.js";
 
 export const keys = {
   projects: ["projects"],
   project: (id) => ["project", String(id)],
   activeRun: ["activeRun"],
+  run: (id) => ["run", String(id)],
 };
 
 export function useProjects() {
@@ -42,3 +43,8 @@ export function useRuns({ projectId, status, page }) {
 }
 
 export const RUNS_PER_PAGE = 20;
+
+/** One run with its attempts, edits, test results and package (F6). */
+export function useRun(runId) {
+  return useQuery({ queryKey: keys.run(runId), queryFn: () => getRun(runId) });
+}

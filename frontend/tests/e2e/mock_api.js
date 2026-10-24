@@ -1,8 +1,9 @@
 // A fake backend inside the browser (Playwright routes) for the page tests that do not need the real one.
 export const API = "http://localhost:8000/api/v1";
 
-export async function mockApi(page, { user, token = "aaa.bbb.ccc", projects = [], activeRun = null, runs = [] } = {}) {
-  const state = { user, token, calls: [], projects, activeRun, runs, uploads: [] };
+export async function mockApi(page, { user, token = "aaa.bbb.ccc", projects = [], activeRun = null, runs = [],
+  runDetails = {} } = {}) {
+  const state = { user, token, calls: [], projects, activeRun, runs, uploads: [], runDetails, posts: [] };
   await page.route(`${API}/**`, async (route) => {
     const request = route.request();
     const path = new URL(request.url()).pathname.replace("/api/v1", "");
@@ -54,6 +55,16 @@ export async function mockApi(page, { user, token = "aaa.bbb.ccc", projects = []
       const limit = Number(query.get("limit") || 20);
       return json(200, { data: { items: rows.slice((pageNo - 1) * limit, pageNo * limit), total: rows.length,
         page: pageNo, limit } });
+    }
+    const run = /^\/runs\/(\d+)$/.exec(path);
+    if (run && request.method() === "GET") {
+      const detail = state.runDetails[run[1]];
+      return detail ? json(200, { data: detail }) : json(404, { error: { code: "NOT_FOUND", message: "Not found." } });
+    }
+    const action = /^\/runs\/(\d+)\/(approval|hint|cancel)$/.exec(path);
+    if (action && request.method() === "POST") {
+      state.posts.push({ action: action[2], body: request.postDataJSON() });
+      return json(200, { data: { message: "OK" } });
     }
     const start = /^\/projects\/(\d+)\/runs$/.exec(path);
     if (start && request.method() === "POST") {
